@@ -12,10 +12,13 @@ import { t, tc, getLang, setLang, LANGS } from './i18n/index.js';
 
 const $ = (id) => document.getElementById(id);
 const view = $('view');
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
 const env = {
   ai: false, checked: false,
   canRecord: !!(navigator.mediaDevices?.getUserMedia && window.MediaRecorder),
   tts: 'speechSynthesis' in window,
+  // Speaking works with Whisper (AI on) or, as a fallback, the browser's own speech recognition.
+  get canSpeak() { return (this.ai && this.canRecord) || !!SpeechRec; },
 };
 
 /* ---------------- Routing ---------------- */
@@ -54,6 +57,7 @@ function route({ keepScroll = false } = {}) {
     default: html = startView(env);
   }
   stopSpeaking();
+  stopMic();
   $('journey').innerHTML = journeyHtml(journeyStepFor(name));
   view.innerHTML = html;
   if (!keepScroll) window.scrollTo(0, 0);
@@ -187,32 +191,84 @@ function speak(targetId, btn) {
   speechSynthesis.speak(u);
 }
 
-/* ---------------- Voice input (Groq Whisper via /api/transcribe) ---------------- */
-let recorder = null;
-async function toggleMic() {
-  const btn = $('micBtn'), note = $('micNote');
-  if (recorder?.state === 'recording') { recorder.stop(); return; }
+/* ---------------- Voice input ----------------
+   Two buttons share one state: the big "Press and speak" and the mic inside the text box.
+   AI on  → record, then transcribe with Groq Whisper (/api/transcribe) — any language.
+   AI off → browser speech recognition, words appear live in the box (hi-IN / en-IN). */
+let recorder = null, recognition = null, starting = false, cancelStart = false;
+function setMicUI(on) {
+  const big = $('micBtn'), inline = $('micInline');
+  if (big) { big.classList.toggle('rec', on); big.textContent = t(on ? 'start.stop' : 'start.speak'); }
+  if (inline) { inline.classList.toggle('rec', on); inline.textContent = t(on ? 'mic.inlineStop' : 'mic.inline'); inline.setAttribute('aria-pressed', String(on)); }
+}
+function micNote(text) { const n = $('micNote'); if (n) n.textContent = text; }
+function stopMic() {
+  if (starting) { cancelStart = true; setMicUI(false); micNote(''); }
+  if (recorder?.state === 'recording') recorder.stop();
+  if (recognition) { const r = recognition; recognition = null; setMicUI(false); try { r.stop(); } catch { /* already stopped */ } }
+}
+async function toggleMic(d) {
+  if (starting || recorder?.state === 'recording' || recognition) { stopMic(); return; }
+  if (d?.focus) $('story')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  if (env.ai && env.canRecord) return recordForWhisper();
+  if (SpeechRec) return liveDictation();
+}
+async function recordForWhisper() {
+  // Show "Stop" at once; a second tap while the browser asks for mic permission cancels cleanly.
+  starting = true; cancelStart = false;
+  setMicUI(true);
+  micNote(t('mic.listening'));
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    starting = false;
+    if (cancelStart) { stream.getTracks().forEach((tr) => tr.stop()); return; }
     const chunks = [];
     recorder = new MediaRecorder(stream);
     recorder.ondataavailable = (e) => chunks.push(e.data);
     recorder.onstop = async () => {
       stream.getTracks().forEach((tr) => tr.stop());
-      btn.classList.remove('rec'); btn.textContent = t('start.speak');
-      note.textContent = t('mic.transcribing');
+      setMicUI(false);
+      micNote(t('mic.transcribing'));
       try {
         const text = await api.transcribe(new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }));
-        $('story').value = ($('story').value + ' ' + text).trim();
-        note.textContent = t('mic.check');
-        $('story').scrollIntoView({ behavior: 'smooth', block: 'center' });
-      } catch (e) { note.textContent = t('mic.fail', { e: e.message }); }
+        const box = $('story');
+        if (box) box.value = (box.value.trim() + ' ' + text.trim()).trim();
+        micNote(t('mic.check'));
+      } catch (e) { micNote(t('mic.fail', { e: e.message })); }
     };
     recorder.start();
-    btn.classList.add('rec'); btn.textContent = t('start.stop');
-    note.textContent = t('mic.listening');
   } catch (e) {
-    note.textContent = t('mic.unavailable', { e: e.message });
+    starting = false;
+    setMicUI(false);
+    micNote(t('mic.unavailable', { e: e.message }));
+  }
+}
+function liveDictation() {
+  const box = $('story');
+  if (!box) return;
+  const base = box.value.trim();
+  const r = new SpeechRec();
+  recognition = r;
+  recognition.lang = getLang() === 'hi' ? 'hi-IN' : 'en-IN';
+  recognition.interimResults = true;
+  recognition.continuous = true;
+  recognition.onresult = (e) => {
+    let said = '';
+    for (let i = 0; i < e.results.length; i++) said += e.results[i][0].transcript;
+    box.value = (base + ' ' + said).trim();
+  };
+  recognition.onerror = (e) => { if (e.error !== 'aborted') micNote(t('mic.unavailable', { e: e.error })); };
+  recognition.onend = () => {
+    if (recognition === r) { recognition = null; setMicUI(false); }
+    micNote(box.value.trim() !== base ? t('mic.check') : '');
+  };
+  try {
+    recognition.start();
+    setMicUI(true);
+    micNote(t('mic.live'));
+  } catch (e) {
+    recognition = null;
+    micNote(t('mic.unavailable', { e: e.message }));
   }
 }
 
@@ -230,7 +286,7 @@ const ACTIONS = {
   tile: (d) => startJourney(t('tiles')[+d.i][2]),
   demo: (d) => { $('story').value = t('demos')[+d.i][1]; $('story').focus(); },
   lang: () => switchLang(getLang() === 'hi' ? 'en' : 'hi'),
-  mic: toggleMic,
+  mic: (d) => toggleMic(d),
   // Facts
   chip: (d) => openModal(chipModal(d.k)),
   'chip-yes': (d) => { S.facts[d.k].o = 'answered'; save(); closeModal(); route({ keepScroll: true }); },
@@ -320,6 +376,9 @@ function applyStaticText() {
   setExpert(document.body.classList.contains('expert'));
   setPill();
 }
+function showMics() {
+  for (const id of ['speakBox', 'micInline']) { const el = $(id); if (el) el.hidden = !env.canSpeak; }
+}
 function switchLang(l) {
   if (!LANGS[l]) return;
   const draft = $('story')?.value; // keep what the owner has typed
@@ -328,8 +387,7 @@ function switchLang(l) {
   closeModal();
   route({ keepScroll: true });
   if (draft != null && $('story')) $('story').value = draft;
-  const box = $('speakBox');
-  if (box) box.hidden = !(env.ai && env.canRecord);
+  showMics();
 }
 
 if (!env.tts) document.body.classList.add('no-tts');
@@ -340,6 +398,5 @@ api.health().then((h) => {
   env.ai = !!h.ai;
   env.checked = true;
   setPill();
-  const box = $('speakBox');
-  if (box) box.hidden = !(env.ai && env.canRecord);
+  showMics();
 });

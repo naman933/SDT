@@ -90,18 +90,22 @@ function continueCard() {
 
 /* ---------------- ① Tell us ---------------- */
 const TILE_ICONS = ['❓', '🔧', '🧾', '💰', '🌱', '🛒'];
-export function startView({ ai, canRecord }) {
+export function startView({ canSpeak }) {
   const tiles = t('tiles');
   const order = [1, 3, 2, 4, 5, 0]; // "I don't know" last
   return `${continueCard()}
   <h1>${esc(t('start.h1'))}</h1>
   <div class="reassure">${t('start.reassure').map((x) => `<span>✓ ${esc(x)}</span>`).join('')}</div>
   <p class="sub">${esc(t('start.sub'))}</p>
-  <div class="speakbox" ${ai && canRecord ? '' : 'hidden'} id="speakBox"><button class="mic big" id="micBtn" data-act="mic">${esc(t('start.speak'))}</button><span class="small">${esc(t('start.speakHint'))}</span><span class="small" id="micNote" aria-live="polite"></span></div>
+  <div class="speakbox" ${canSpeak ? '' : 'hidden'} id="speakBox"><button class="mic big" id="micBtn" data-act="mic" data-focus="1">${esc(t('start.speak'))}</button><span class="small">${esc(t('start.speakHint'))}</span></div>
   <div class="small lead">${esc(t('start.orPick'))}</div>
   <div class="tiles">${order.map((i) => `<button class="tile" data-act="tile" data-i="${i}"><span class="ico" aria-hidden="true">${TILE_ICONS[i]}</span><span><b>${esc(tiles[i][0])}</b><span>${esc(tiles[i][1])}</span></span></button>`).join('')}</div>
   <label class="small lead" for="story">${esc(t('start.orType'))}</label>
-  <textarea id="story" rows="3" placeholder="${esc(t('start.ph'))}">${esc(S.story)}</textarea>
+  <div class="typebox">
+    <textarea id="story" rows="3" placeholder="${esc(t('start.ph'))}">${esc(S.story)}</textarea>
+    <button type="button" class="mic-inline" id="micInline" data-act="mic" title="${esc(t('mic.inlineTitle'))}" aria-label="${esc(t('mic.inlineTitle'))}" ${canSpeak ? '' : 'hidden'}>${esc(t('mic.inline'))}</button>
+  </div>
+  <p class="small" id="micNote" aria-live="polite"></p>
   <p class="trust">🔒 ${esc(t('start.trust'))}</p>
   <details><summary class="small">${esc(t('start.demos'))}</summary><div class="demo">${t('demos').map((d, i) => `<button data-act="demo" data-i="${i}">${esc(d[0])}</button>`).join('')}</div></details>
   ${ctaBar(`<button class="primary" id="goBtn" data-act="start">${esc(t('start.continue'))}</button>`)}`;
