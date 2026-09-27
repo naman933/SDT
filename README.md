@@ -6,6 +6,18 @@ MSME Navigator helps small-business owners in India find financial and support r
 
 This is a prototype built on a **controlled corpus**, not a list of every scheme in India. Its results are **decision support, not approval**.
 
+## The owner's journey
+
+Five steps, shown as a bar at the top of every screen:
+
+1. **Tell us:** press and speak, tap a picture tile, or type. The screen says: free, no documents, about 3 minutes.
+2. **A few questions:** at most 4, one per screen. "I don't know" is always an answer. What we understood appears as chips the owner can edit, and anything we assumed is marked **?** so they can confirm it.
+3. **Your options:** a **"Your best next step"** card first, then short three-line cards (what it is / why for you / what to do) with a 🟢/🟡 badge. Full details are behind "See details".
+4. **Get ready:** a paper checklist with *I have it / I don't have it / What is this?*, questions to confirm, where to go, and a **"Take this with you"** one-page summary to share on WhatsApp or print.
+5. **Apply & track:** the owner reports *Not applied yet / Waiting / Approved / Not approved*. "Not approved" leads to the other options.
+
+Available on every screen: **Help** (Saathi note and official portals), **Read aloud** (the browser's own voice), tap-to-explain jargon (NBFC, collateral, working capital…), and the English/हिंदी switch. **Expert view** in the footer shows the scores and matching logic for reviewers. Returning users get a *Welcome back — continue where you left off* card.
+
 ## Architecture
 
 ```

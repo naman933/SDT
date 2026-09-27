@@ -56,7 +56,7 @@ export const CORPUS = [
     purposes: { startup: 1, equipment: 0.7, expansion: 0.5 }, stages: ['new'], amount: { min: 10 * L, max: CR }, delivers: ['money'], speed: 'medium', access: 'lender', steps: 4,
     conditions: [
       lender(),
-      stageNew('A first-time (greenfield) enterprise'),
+      stageNew('A brand-new business (your first venture)'),
       C('Borrower is a woman and/or SC/ST entrepreneur (for companies/firms: at least 51% held by them)', 'applicant', (f) => { const a = V(f, 'applicant'); return !a ? 'unknown' : a === 'none' ? 'not_met' : 'met'; }),
       C('Loan between ₹10 lakh and ₹1 crore', 'amount', (f) => { const a = V(f, 'amount'); return a == null ? 'unknown' : a >= 10 * L && a <= CR ? 'met' : 'not_met'; }),
     ],
@@ -131,7 +131,7 @@ export const CORPUS = [
     plain: '25% capital subsidy (capped at ₹12.5 lakh) on eligible plant & machinery for circular-economy projects in existing micro and small units; projects up to ₹2 crore, per the official portal.',
     purposeFn: (f, n) => (n === 'circular' ? 1 : ['equipment', 'expansion'].includes(n) && V(f, 'green_tech') === 'circular' ? 0.95 : 0), amount: { min: 0, max: 2 * CR },
     delivers: ['money', 'subsidy'], speed: 'slow', access: 'lender', steps: 5,
-    conditions: [lender(), brownfield('An existing (brownfield) unit'), mse(), udyamFix(), amountMax(2 * CR, 'Project up to ₹2 crore'), always('Machinery is eligible circular-economy plant & machinery under the scheme', 'spice_list')],
+    conditions: [lender(), brownfield('A business that is already running'), mse(), udyamFix(), amountMax(2 * CR, 'Project up to ₹2 crore'), always('Machinery is eligible circular-economy plant & machinery under the scheme', 'spice_list')],
     info: DOCS_LOAN, route: { text: 'See RAMP portal for the application route', url: 'https://ramp.msme.gov.in/ramp/' }, src: RAMP,
   },
   {
@@ -252,6 +252,35 @@ export const CORPUS = [
     conditions: [], route: { text: 'Register free on the official portal (never pay an agent for it)', url: 'https://udyamregistration.gov.in/' }, src: { t: 'Udyam', u: 'https://udyamregistration.gov.in/' },
   },
 ];
+
+// Plain-language summary for owners: `short` = what it is (one line), `next` = what to do.
+const PLAIN = {
+  mudra: ['Government-backed business loan up to ₹20 lakh, without property as security.', 'Ask your bank for a MUDRA loan, or apply on the Udyamimitra portal.'],
+  standup: ['Bank loan of ₹10 lakh–₹1 crore for new businesses of women or SC/ST entrepreneurs.', 'Ask your bank about Stand-Up India, or apply on the Stand-Up Mitra portal.'],
+  pmegp: ['Government subsidy on a bank loan to start a new small business.', 'Apply on the PMEGP portal. Your District Industries Centre can help.'],
+  vishwakarma: ['Training, toolkit support and a low-interest loan for traditional artisans.', 'Register at your nearest Common Service Centre (CSC).'],
+  delayed: ["Official complaint when a buyer doesn't pay you within 45 days.", 'File a complaint on the MSME Samadhaan portal.'],
+  ahidf: ['Help with loan interest for dairy processing units, like milk chilling.', 'Apply on the AHIDF portal together with your bank.'],
+  gift: ['Interest help on loans for energy-saving or clean technology.', 'Ask a participating bank about MSE GIFT (see the RAMP portal).'],
+  spice: ['25% subsidy on recycling or waste-reuse machines for running businesses.', 'Check the RAMP portal and ask your bank about MSE SPICE.'],
+  team: ['Help to start selling online through ONDC.', 'Register on the RAMP / MSME TEAM portal.'],
+  gem: ['Sell your products or services to government offices online.', 'Register as a seller on the GeM portal.'],
+  marketing: ['Support to take part in trade fairs and exhibitions.', 'Ask your DIC or MSME-DFO about current trade fairs.'],
+  intl: ['Support to attend international trade fairs and buyer meets.', 'Ask your MSME-DFO about current international events.'],
+  zed: ['A quality certificate for your business, with help on the cost.', 'Apply on the ZED portal.'],
+  lean: ['Expert help to cut waste and improve productivity.', 'See the MSME LEAN scheme on the MSME ministry website.'],
+  esdp: ['Training programmes to start or run a business.', 'Ask your MSME-DFO about upcoming training.'],
+  fof: ['Investment (not a loan) from venture funds backed by the government.', 'Approach funds that take part in the Fund of Funds.'],
+  nssh: ['Help for SC/ST-owned businesses to grow and sell to government.', 'Contact the National SC-ST Hub.'],
+  sclcss: ['Subsidy for upgrading technology — current status to be confirmed.', 'Check the current status first.'],
+  bank_term: ['A bank loan for a machine or expansion, repaid in instalments.', 'Talk to your bank — start with the one where you have your account.'],
+  bank_wc: ['A running credit limit from your bank for stock and daily expenses.', 'Ask your bank for a working-capital limit (cash credit or overdraft).'],
+  nbfc: ['A loan from a finance company that is not a bank — often faster; compare the total cost.', 'Compare offers from 2–3 RBI-registered finance companies.'],
+  vendor: ['Finance arranged by the machine seller when you buy.', 'Ask the machine seller which lenders they work with.'],
+  treds: ['Get paid early on bills raised to big companies or government buyers.', 'Register as a seller on an RBI-approved TReDS platform.'],
+  invoice: ['Get money now against an unpaid bill, from a bank or finance company.', 'Ask your bank about bill discounting.'],
+};
+for (const p of CORPUS) if (PLAIN[p.id]) [p.short, p.next] = PLAIN[p.id];
 
 export const byId = (id) => CORPUS.find((p) => p.id === id);
 

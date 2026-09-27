@@ -27,6 +27,7 @@ describe('Hindi coverage', () => {
     const need = new Set();
     for (const p of CORPUS) {
       need.add(p.plain); need.add(p.route.text);
+      if (p.type === 'direct') { expect(p.short, p.id).toBeTruthy(); expect(p.next, p.id).toBeTruthy(); need.add(p.short); need.add(p.next); }
       p.conditions.forEach((c) => need.add(c.text));
       (p.info || []).forEach(([d]) => need.add(d));
     }

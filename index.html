@@ -13,14 +13,21 @@
       <header class="topbar">
         <a class="brand" href="#/">MSME <i>Navigator</i></a>
         <nav class="nav">
-          <button class="pill lang" id="langBtn" data-act="lang" lang="hi">हिंदी</button>
-          <span class="pill" id="aiPill">Checking…</span>
-          <button class="pill" data-act="about" data-i18n="nav.about">About the data</button>
+          <button class="pill help" data-act="help" data-i18n="nav.help">🙋 Help</button>
           <a class="pill" href="#/my-msme" data-i18n="nav.my">My MSME</a>
+          <button class="pill lang" id="langBtn" data-act="lang" lang="hi">हिंदी</button>
         </nav>
       </header>
+      <ol class="journey" id="journey" aria-label="Your progress"></ol>
       <main id="view" tabindex="-1"></main>
-      <p class="foot" data-i18n="foot">Prototype · controlled corpus recorded Sep 2026 · records are not live-verified · decision support, not approval.</p>
+      <footer class="foot">
+        <div class="row">
+          <span class="pill" id="aiPill">Checking…</span>
+          <button class="pill" data-act="about" data-i18n="nav.about">About the data</button>
+          <button class="pill" id="expertBtn" data-act="expert" aria-pressed="false" data-i18n="nav.expert">Expert view</button>
+        </div>
+        <p data-i18n="foot">Prototype · controlled corpus recorded Sep 2026 · records are not live-verified · decision support, not approval.</p>
+      </footer>
     </div>
     <div class="modal" id="modal" hidden><div class="mbox" id="modalBody" role="dialog" aria-modal="true"></div></div>
     <script type="module" src="/src/main.js"></script>

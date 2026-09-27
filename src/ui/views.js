@@ -1,14 +1,18 @@
 // Pure render functions: state in, HTML string out. Interactions use data-act attributes (see main.js).
-// All user-visible text goes through t() / td() / tc() so the page follows the language toggle.
+// Journey: ① Tell us → ② A few questions → ③ Your options → ④ Get ready → ⑤ Apply & track.
+// All user-visible text goes through t() / td() / tc(); jargon is wrapped by glossify() for tap-to-explain.
 import { S } from '../state.js';
 import {
   NEEDS, QUESTIONS, MAX_QUESTIONS, CORPUS, INSTITUTIONAL, SUPPORT, RECORDED, byId,
-  V, needsOf, rank, evaluate, enablersFor, openSlots, fitBand, actBand, STATUS_TONE,
+  V, needsOf, rank, evaluate, enablersFor, openSlots, fitBand, actBand,
 } from '../engine/index.js';
 import { t, td, tc, money, joinList, getLang, STRINGS } from '../i18n/index.js';
+import { glossify, termById } from '../i18n/glossary.js';
+import { docHelp } from '../i18n/docs.js';
 
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const attr = (v) => esc(JSON.stringify(v));
+const g = (text, used) => glossify(esc(text), getLang(), used); // escaped + tap-to-explain
 
 /* ---------------- Localised data labels ---------------- */
 const LABEL_EN = {
@@ -41,24 +45,69 @@ export function fmt(k, v) {
 }
 const ORIGIN_CLS = { said: 'o-said', ai: 'o-ai', inferred: 'o-inferred', answered: 'o-answered', unknown: 'o-unknown' };
 const knownKeys = (f) => Object.keys(f).filter((k) => hasLabel(k) && V(f, k) != null);
-const fitL = (s) => t('fit.' + fitBand(s));
-const actL = (s) => t('act.' + actBand(s));
 const nameOf = (p) => tc(p.name);
+const OUTCOMES = ['notyet', 'waiting', 'approved', 'rejected'];
+export const outcomeL = (o) => t('track.outcome')[OUTCOMES.indexOf(o)] || '';
+const cap = (s) => (getLang() === 'en' && s ? s[0].toUpperCase() + s.slice(1) : s);
+const readBtn = (target) => `<button type="button" class="ghost speak" data-act="speak" data-target="${target}">${esc(t('read'))}</button>`;
+const ctaBar = (inner) => `<div class="cta-bar">${inner}</div>`;
 
-/* ---------------- Start ---------------- */
-export function startView({ ai, canRecord }) {
-  return `<h1>${esc(t('start.h1'))}</h1>
-  <p class="sub">${esc(t('start.sub'))}</p>
-  <label class="small" for="story"><b>${esc(t('start.label'))}</b></label>
-  <textarea id="story" placeholder="${esc(t('start.ph'))}">${esc(S.story)}</textarea>
-  <div class="row" style="margin-top:8px"><button class="mic" id="micBtn" data-act="mic" ${ai && canRecord ? '' : 'hidden'}>${esc(t('start.mic'))}</button><span class="small" id="micNote" aria-live="polite"></span></div>
-  <div class="small" style="margin-top:14px;font-weight:700">${esc(t('start.or'))}</div>
-  <div class="tiles">${t('tiles').map((x, i) => `<button class="tile" data-act="tile" data-i="${i}"><b>${esc(x[0])}</b><span>${esc(x[1])}</span></button>`).join('')}</div>
-  <div class="actions"><button class="primary" id="goBtn" data-act="start">${esc(t('start.continue'))}</button></div>
-  <details><summary class="small">${esc(t('start.demos'))}</summary><div class="demo">${t('demos').map((d, i) => `<button data-act="demo" data-i="${i}">${esc(d[0])}</button>`).join('')}</div></details>`;
+/* ---------------- Journey bar ---------------- */
+export function journeyHtml(step) {
+  if (!step) return '';
+  return t('journey').map((s, i) => {
+    const n = i + 1, cls = n < step ? 'done' : n === step ? 'cur' : '';
+    return `<li class="${cls}" ${n === step ? 'aria-current="step"' : ''}><span class="n">${n < step ? '✓' : n}</span><span class="lbl">${esc(s)}</span></li>`;
+  }).join('');
 }
 
-/* ---------------- Understanding (echo-back) ---------------- */
+/* ---------------- Fact chips (the merged "what we understood") ---------------- */
+function chipStrip() {
+  // Core facts only (plus anything we assumed, so it can be confirmed); the full list lives under "Change my answers".
+  const core = ['need', 'amount', 'activity', 'stage', 'city'];
+  const keys = [...core, ...Object.keys(S.facts).filter((k) => hasLabel(k) && !core.includes(k) && S.facts[k].o === 'inferred' && !['sector', 'state'].includes(k))];
+  const chips = keys.filter((k) => S.facts[k] && V(S.facts, k) != null).map((k) => {
+    const assumed = S.facts[k].o === 'inferred';
+    return `<button type="button" class="fchip ${assumed ? 'assumed' : ''}" data-act="chip" data-k="${k}" aria-label="${esc(t('chips.edit', { x: label(k) }))}">${esc(fmt(k, V(S.facts, k)))} <span aria-hidden="true">${assumed ? '?' : '✎'}</span></button>`;
+  });
+  if (!chips.length) return '';
+  return `<div class="chips"><span class="small">${esc(t('chips.t'))}</span> ${chips.join('')}</div>`;
+}
+
+/* ---------------- Welcome back ---------------- */
+function continueCard() {
+  if (!S.story) return '';
+  const ids = Object.keys(S.tracked).sort((a, b) => String(S.tracked[b].added).localeCompare(String(S.tracked[a].added)));
+  let line, href;
+  if (ids.length) {
+    const id = ids[0], o = S.tracked[id].outcome;
+    if (o && o !== 'notyet') { line = t('welcome.track', { n: nameOf(byId(id)) }) + ` (${outcomeL(o)})`; href = `#/track/${id}`; }
+    else { line = t('welcome.getready', { n: nameOf(byId(id)) }); href = `#/explore/${id}`; }
+  } else if (S.lastTop.length) { line = t('welcome.options'); href = '#/results'; }
+  else return '';
+  return `<div class="welcome"><b>${esc(t('welcome.t'))}</b><p>${esc(line)}</p><div class="row"><a class="btn primary" href="${href}">${esc(t('welcome.continue'))}</a><button class="secondary" data-act="new-need">${esc(t('welcome.new'))}</button></div></div>`;
+}
+
+/* ---------------- ① Tell us ---------------- */
+const TILE_ICONS = ['❓', '🔧', '🧾', '💰', '🌱', '🛒'];
+export function startView({ ai, canRecord }) {
+  const tiles = t('tiles');
+  const order = [1, 3, 2, 4, 5, 0]; // "I don't know" last
+  return `${continueCard()}
+  <h1>${esc(t('start.h1'))}</h1>
+  <div class="reassure">${t('start.reassure').map((x) => `<span>✓ ${esc(x)}</span>`).join('')}</div>
+  <p class="sub">${esc(t('start.sub'))}</p>
+  <div class="speakbox" ${ai && canRecord ? '' : 'hidden'} id="speakBox"><button class="mic big" id="micBtn" data-act="mic">${esc(t('start.speak'))}</button><span class="small">${esc(t('start.speakHint'))}</span><span class="small" id="micNote" aria-live="polite"></span></div>
+  <div class="small lead">${esc(t('start.orPick'))}</div>
+  <div class="tiles">${order.map((i) => `<button class="tile" data-act="tile" data-i="${i}"><span class="ico" aria-hidden="true">${TILE_ICONS[i]}</span><span><b>${esc(tiles[i][0])}</b><span>${esc(tiles[i][1])}</span></span></button>`).join('')}</div>
+  <label class="small lead" for="story">${esc(t('start.orType'))}</label>
+  <textarea id="story" rows="3" placeholder="${esc(t('start.ph'))}">${esc(S.story)}</textarea>
+  <p class="trust">🔒 ${esc(t('start.trust'))}</p>
+  <details><summary class="small">${esc(t('start.demos'))}</summary><div class="demo">${t('demos').map((d, i) => `<button data-act="demo" data-i="${i}">${esc(d[0])}</button>`).join('')}</div></details>
+  ${ctaBar(`<button class="primary" id="goBtn" data-act="start">${esc(t('start.continue'))}</button>`)}`;
+}
+
+/* ---------------- Full list of understood facts (reached via "Change my answers") ---------------- */
 export function understandView() {
   const rows = Object.keys(S.facts).filter(hasLabel).map((k) => {
     const x = S.facts[k];
@@ -71,33 +120,33 @@ export function understandView() {
   ${S.summary ? `<div class="note"><b>${esc(t('check.summary'))}</b> ${esc(S.summary)}</div>` : ''}
   <div class="facts">${rows || `<div class="note">${esc(t('check.empty'))}</div>`}</div>
   <p class="small"><span class="origin o-said">${esc(t('origin.said'))}</span> ${esc(t('check.legend.said'))} · <span class="origin o-ai">${esc(t('origin.ai'))}</span> ${esc(t('check.legend.ai'))} · <span class="origin o-inferred">${esc(t('origin.inferred'))}</span> ${esc(t('check.legend.inferred'))}</p>
-  <div class="actions"><a class="btn secondary" href="#/">${esc(t('check.back'))}</a><button class="primary" data-act="confirm">${esc(t('check.ok'))}</button></div>`;
+  <div class="actions"><a class="btn secondary" href="#/">${esc(t('check.back'))}</a></div>
+  ${ctaBar(`<button class="primary" data-act="confirm">${esc(t('check.ok'))}</button>`)}`;
 }
 
-/* ---------------- Adaptive question ---------------- */
+/* ---------------- ② A few questions ---------------- */
 export function questionView() {
   const slot = S.curQ;
   const q = QUESTIONS[slot];
   const n = S.asked.filter((s) => s !== 'need').length;
   const R = rank(S.facts);
-  const side = S.needHelp
-    ? `<b>${esc(t('q.helpTitle'))}</b><p class="small">${esc(t('q.helpText'))}</p><button class="ghost" data-act="saathi">${esc(t('res.talkLower'))}</button>`
-    : `<b>${esc(t('q.whyTitle'))}</b><p style="margin:6px 0">${esc(t('q.whyText'))}${S.curAffects.length ? ':' : getLang() === 'hi' ? '।' : '.'}</p>
-      ${S.curAffects.length ? '<ul>' + S.curAffects.slice(0, 4).map((id) => '<li>' + esc(nameOf(byId(id))) + '</li>').join('') + '</ul>' : ''}
-      <hr><b>${esc(t('q.considering', { n: R.top.length }))}</b><div class="small" style="margin-top:4px">${R.top.slice(0, 5).map((x) => esc(nameOf(x.p))).join(' · ') || esc(t('q.waiting'))}</div>
-      <hr><div class="small">${esc(t('q.stop', { max: MAX_QUESTIONS }))}</div>`;
   const desc = (o) => (slot === 'need' ? needS(o[0]) : '');
-  return `<div class="qwrap"><div>
+  const help = S.needHelp
+    ? `<div class="banner help"><b>${esc(t('q.helpTitle'))}</b>${esc(t('q.helpText'))}<div class="actions left"><button class="ghost" data-act="help">${esc(t('res.talkLower'))}</button></div></div>` : '';
+  return `${S.summary ? `<p class="small">“${esc(S.summary)}”</p>` : ''}${chipStrip()}
     <div class="qprog">${esc(slot === 'need' ? t('q.first') : t('q.n', { n: n + 1, max: MAX_QUESTIONS }))}</div>
-    <h2>${esc(qText(slot))}</h2><p class="sub">${esc(qWhy(slot))}</p>
-    <div class="opts">${q.opts.map((o, i) => `<button class="opt" data-act="opt" data-i="${i}">${esc(optL(slot, o[0]))}${desc(o) ? `<div class="small">${esc(desc(o))}</div>` : ''}</button>`).join('')}</div>
+    <h2>${esc(qText(slot))}</h2>
+    <p class="small"><b>${esc(t('q.whyAsk'))}</b> ${esc(qWhy(slot))}</p>
+    ${help}
+    <div class="opts">${q.opts.map((o, i) => `<button class="opt" data-act="opt" data-i="${i}">${esc(optL(slot, o[0]))}${desc(o) ? `<div class="small">${esc(desc(o))}</div>` : ''}</button>`).join('')}
+      <button class="opt dk" data-act="dk">🤷 ${esc(t('q.dk'))}</button></div>
     ${q.amount ? `<form class="row" data-form="amount"><input id="amtIn" class="grow" placeholder="${esc(t('q.amountPh'))}" aria-label="${esc(label('amount'))}"><button class="ghost" type="submit">${esc(t('q.use'))}</button></form><p class="small err" id="amtErr" aria-live="polite"></p>` : ''}
-    <div class="row" style="margin-top:10px"><button class="secondary" data-act="dk">${esc(t('q.dk'))}</button><button class="secondary" data-act="dk" data-skip="1">${esc(t('q.skip'))}</button><span class="grow"></span><button class="link" data-act="show-results">${esc(t('q.showNow'))}</button></div>
-  </div><aside class="side">${side}</aside></div>`;
+    <p><button class="link" data-act="show-results">${esc(t('q.showNow'))}</button></p>
+    <aside class="side expert-only"><b>${esc(t('q.whyTitle'))}</b> ${S.curAffects.map((id) => esc(nameOf(byId(id)))).join(' · ') || '—'}<br>${esc(t('q.considering', { n: R.top.length }))}: ${R.top.slice(0, 5).map((x) => esc(nameOf(x.p))).join(' · ')}</aside>`;
 }
 
-/* ---------------- Results ---------------- */
-function whyText(r) {
+/* ---------------- ③ Your options ---------------- */
+function whyBits(r) {
   const f = S.facts, bits = [];
   if (r.need) { const l = needL(r.need); bits.push(t('why.need', { need: getLang() === 'hi' ? l : l[0].toLowerCase() + l.slice(1) })); }
   const a = V(f, 'amount');
@@ -106,7 +155,7 @@ function whyText(r) {
   if (st) bits.push(t(st === 'new' ? 'why.new' : 'why.existing'));
   const act = V(f, 'activity');
   if (act && (r.p.relevantIf || r.id === 'mudra')) bits.push(t('why.fits', { a: activityL(act) }));
-  let s = t('why.because', { x: bits.length ? joinList(bits) : t('why.default') });
+  let s = cap(bits.length ? joinList(bits) : t('why.default')) + (getLang() === 'hi' ? '।' : '.');
   const cat = r.p.category?.(f);
   if (cat) s += ' ' + t('why.cat', { a: money(a), c: td('mudra.' + cat, cat) });
   return s;
@@ -117,16 +166,10 @@ export function reasonText(r) {
   if (r.overMax) return t('reason.over', { max: money(r.p.amount.max), a: money(V(S.facts, 'amount')) });
   return t(r.status === 'weak' ? 'hidden.weak' : 'hidden.lower');
 }
-function condLi(cs) {
-  return cs.map((c) => `<li>${esc(tc(c.text))}${c.basis === 'typical' ? ` <span class="chip">${esc(t('chip.typical'))}</span>` : ''}${c.kind === 'conditional' ? ` <span class="chip">${esc(t('chip.ifApplicable'))}</span>` : ''}</li>`).join('');
-}
-function knownFacts(r) {
-  const f = S.facts, out = [];
-  if (r.need) out.push(t('known.need', { x: needL(r.need) }));
-  const a = V(f, 'amount'); if (a != null) out.push(t('known.amount', { x: money(a) }));
-  const st = V(f, 'stage'); if (st) out.push(t('known.stage', { x: fmt('stage', st) }));
-  const act = V(f, 'activity'); if (act) out.push(t('known.biz', { x: activityL(act) }));
-  return out;
+const badge = (r) => (fitBand(r.fit) === 'strong' ? `<span class="badge good">${esc(t('badge.good'))}</span>` : `<span class="badge check">${esc(t('badge.check'))}</span>`);
+const familyChip = (p) => `<span class="chip ${p.family === 'gov' ? 'b' : ''}">${esc(t(p.family === 'gov' ? 'chip.gov' : 'chip.fin'))}</span>`;
+function condLi(cs, used) {
+  return cs.map((c) => `<li>${g(tc(c.text), used)}${c.basis === 'typical' ? ` <span class="chip">${esc(t('chip.typical'))}</span>` : ''}${c.kind === 'conditional' ? ` <span class="chip">${esc(t('chip.ifApplicable'))}</span>` : ''}</li>`).join('');
 }
 function bars(parts) {
   return Object.entries(parts).map(([k, [v, w]]) => `<div class="small split"><span>${esc(t('part.' + k))}</span><span>${Math.round(v * w)} / ${w}</span></div><div class="bar"><i style="width:${Math.round(v * 100)}%"></i></div>`).join('');
@@ -134,34 +177,48 @@ function bars(parts) {
 function scorePanel(r) {
   const m = r.conds.filter((c) => c.kind === 'mandatory');
   const n = (st) => m.filter((c) => c.state === st).length;
-  return `<div class="sgrid">
-    <div><b>${esc(t('score.fit', { n: r.fit }))}</b> <span class="small">${esc(t('score.ranks'))}</span>${bars(r.parts)}</div>
+  return `<div class="score expert-only"><div class="sgrid">
+    <div><b>${esc(t('score.fit', { n: r.fit }))}</b> <span class="small">${esc(t('score.ranks'))} · ${esc(t('fit.' + fitBand(r.fit)))}</span>${bars(r.parts)}</div>
     <div><b>${esc(t('score.conds'))}</b> <span class="small">${esc(t('score.shown'))}</span><p class="small">${esc(t('score.condText', { m: n('met'), t: m.length, u: n('unknown'), n: n('not_met') }))}<br>${esc(t('score.unknownNo'))}</p></div>
-    <div><b>${esc(t('score.act', { n: r.act }))}</b> <span class="small">${esc(t('score.tie'))}</span>${bars(r.aparts)}</div>
-  </div><p class="small">${esc(t('score.note'))}</p>`;
+    <div><b>${esc(t('score.act', { n: r.act }))}</b> <span class="small">${esc(t('score.tie'))} · ${esc(t('act.' + actBand(r.act)))}</span>${bars(r.aparts)}</div>
+  </div><p class="small">${esc(t('score.note'))}</p></div>`;
 }
-function card(r) {
-  const p = r.p, f = S.facts;
-  const g = (s) => r.conds.filter((c) => c.state === s);
-  const en = enablersFor(r, f);
-  const known = knownFacts(r).map((x) => `<li>${esc(x)}</li>`).join('') + condLi(g('met'));
-  const toCheck = g('unknown').length || g('todo').length
-    ? `<ul class="list unk">${condLi(g('unknown'))}</ul><ul class="list todo">${condLi(g('todo'))}</ul>`
-    : `<p class="small">${esc(t('card.nothing'))}</p>`;
+function detailsBody(r) {
+  const p = r.p, used = new Set();
+  const gs = (s) => r.conds.filter((c) => c.state === s);
   const host = (u) => u.replace(/^https?:\/\//, '').replace(/\/$/, '');
-  return `<article class="card" id="c-${r.id}">
-    <div class="top"><div><div class="name">${esc(nameOf(p))}</div>
-      <div><span class="chip ${p.family === 'gov' ? 'b' : ''}">${esc(t(p.family === 'gov' ? 'chip.gov' : 'chip.fin'))}</span>${p.parent ? `<span class="chip">${esc(t('card.partOf', { p: p.parent }))}</span>` : ''}<span class="chip ${STATUS_TONE[r.status]}">${esc(t('status.' + r.status))}</span></div></div>
-      <div class="fitbox"><div class="fitlabel">${esc(fitL(r.fit))}</div><div class="small">${esc(actL(r.act))}</div></div></div>
-    <p style="margin:10px 0 0">${esc(tc(p.plain))}</p>
-    <div class="why">${esc(whyText(r))}</div>
-    <div class="cols"><div><b class="small">${esc(t('card.know'))}</b><ul class="list met">${known || `<li>${esc(t('card.only'))}</li>`}</ul></div>
+  const toCheck = gs('unknown').length || gs('todo').length
+    ? `<ul class="list unk">${condLi(gs('unknown'), used)}</ul><ul class="list todo">${condLi(gs('todo'), used)}</ul>` : `<p class="small">${esc(t('card.nothing'))}</p>`;
+  return `<p>${g(tc(p.plain), used)}</p>
+    <div class="cols"><div><b class="small">${esc(t('card.know'))}</b><ul class="list met">${condLi(gs('met'), used) || `<li>${esc(t('card.only'))}</li>`}</ul></div>
       <div><b class="small">${esc(t('card.check'))}</b>${toCheck}</div></div>
-    ${en.map(({ e, conds }) => { const u = conds.filter((c) => c.state === 'unknown'); return `<div class="enabler"><b>${esc(t('card.alsoAsk', { n: nameOf(e) }))}</b> — ${esc(tc(e.plain))}${u.length ? `<div class="small">${esc(t('card.toCheck', { x: u.map((c) => tc(c.text)).join('; ') }))}</div>` : ''}</div>`; }).join('')}
-    <div class="small" style="margin-top:10px"><b>${esc(t('card.route'))}</b> ${esc(tc(p.route.text))}${p.route.url ? ` — <a href="${p.route.url}" target="_blank" rel="noopener">${esc(host(p.route.url))} ↗</a>` : ''}<br>
-      <b>${esc(t('card.source'))}</b> ${p.src ? `<a href="${p.src.u}" target="_blank" rel="noopener">${esc(tc(p.src.t))}</a> · ${esc(t('card.recorded', { d: RECORDED }))} · <span style="color:var(--amber)">${esc(t('card.notVerified'))}</span>` : esc(t('card.generic'))}${p.corpusNote ? ` · <span class="chip">${esc(tc(p.corpusNote))}</span>` : ''}</div>
-    <div class="actions left" style="margin-top:12px"><button class="primary" data-act="explore" data-id="${r.id}">${esc(t('card.explore'))}</button><button class="ghost" data-act="toggle-score" data-id="${r.id}" aria-expanded="false">${esc(t('card.how'))}</button></div>
-    <div class="score" id="sc-${r.id}" hidden>${scorePanel(r)}</div>
+    ${enablersFor(r, S.facts).map(({ e, conds }) => { const u = conds.filter((c) => c.state === 'unknown'); return `<div class="enabler"><b>${esc(t('card.alsoAsk', { n: nameOf(e) }))}</b> — ${g(tc(e.plain), used)}${u.length ? `<div class="small">${esc(t('card.toCheck', { x: u.map((c) => tc(c.text)).join('; ') }))}</div>` : ''}</div>`; }).join('')}
+    <p class="small"><b>${esc(t('card.route'))}</b> ${esc(tc(p.route.text))}${p.route.url ? ` — <a href="${p.route.url}" target="_blank" rel="noopener">${esc(host(p.route.url))} ↗</a>` : ''}<br>
+      <b>${esc(t('card.source'))}</b> ${p.src ? `<a href="${p.src.u}" target="_blank" rel="noopener">${esc(tc(p.src.t))}</a> · ${esc(t('card.recorded', { d: RECORDED }))} · <span style="color:var(--amber)">${esc(t('card.notVerified'))}</span>` : esc(t('card.generic'))}${p.corpusNote ? `<span class="expert-only-inline"> · ${esc(tc(p.corpusNote))}</span>` : ''}</p>
+    ${scorePanel(r)}`;
+}
+function bestCard(r) {
+  const p = r.p, used = new Set();
+  return `<section class="best" id="best">
+    <div class="best-t">${esc(t('best.t'))}</div>
+    <div class="name">${esc(nameOf(p))}</div><div>${badge(r)} ${familyChip(p)}</div>
+    <p class="big">${g(tc(p.next), used)}</p>
+    <p>${g(tc(p.short), used)}</p>
+    <p class="small"><b>${esc(t('card.whyYou'))}</b> ${esc(whyBits(r))}</p>
+    ${p.info?.length ? `<p class="small">📄 ${esc(t('best.papers', { n: p.info.length }))}</p>` : ''}
+    <div class="row"><button class="primary" data-act="explore" data-id="${r.id}">${esc(t('card.getReady'))}</button>${readBtn('best')}</div>
+    <details><summary>${esc(t('card.details'))}</summary>${detailsBody(r)}</details>
+  </section>`;
+}
+function optionCard(r) {
+  const p = r.p, used = new Set();
+  return `<article class="card" id="c-${r.id}">
+    <div class="top"><div class="name">${esc(nameOf(p))}</div><div>${badge(r)} ${familyChip(p)}</div></div>
+    <p>${g(tc(p.short), used)}</p>
+    <p class="small"><b>${esc(t('card.whyYou'))}</b> ${esc(whyBits(r))}</p>
+    <p class="small"><b>${esc(t('card.todo'))}</b> ${g(tc(p.next), used)}</p>
+    <div class="row"><button class="ghost" data-act="explore" data-id="${r.id}">${esc(t('card.getReady'))}</button></div>
+    <details><summary>${esc(t('card.details'))}</summary>${detailsBody(r)}</details>
   </article>`;
 }
 function helpReasons(R) {
@@ -175,67 +232,87 @@ function helpReasons(R) {
 }
 export function resultsView() {
   const f = S.facts, R = rank(f);
-  const basis = ['need', 'amount', 'stage', 'activity', 'city'].map((k) => (V(f, k) != null ? fmt(k, V(f, k)) : null)).filter(Boolean);
-  let h = `<h2>${esc(t('res.h2'))}</h2><p class="sub">${esc(t('res.basis', { b: basis.join(' · ') || t('res.yourDesc') }))}</p>`;
-  if (t('translationNote')) h += `<p class="small">${esc(t('translationNote'))}</p>`;
+  let h = `<h2>${esc(t('res.h2'))}</h2>${chipStrip()}`;
   if (!needsOf(f).length) {
-    h += `<div class="banner"><b>${esc(t('res.needMore.t'))}</b>${esc(t('res.needMore.b'))} <button class="link" data-act="confirm">${esc(t('res.answerOne'))}</button> ${esc(t('res.or'))} <button class="link" data-act="saathi">${esc(t('res.talkLower'))}</button>.</div>`;
+    h += `<div class="banner"><b>${esc(t('res.needMore.t'))}</b>${esc(t('res.needMore.b'))} <button class="link" data-act="confirm">${esc(t('res.answerOne'))}</button> ${esc(t('res.or'))} <button class="link" data-act="help">${esc(t('res.talkLower'))}</button>.</div>`;
   } else if (!R.top.length) {
-    h += `<div class="banner"><b>${esc(t('res.none.t'))}</b>${esc(t('res.none.b'))}<div class="actions left"><button class="primary" data-act="saathi">${esc(t('res.talkLower'))}</button></div></div>`;
+    h += `<div class="banner"><b>${esc(t('res.none.t'))}</b>${esc(t('res.none.b'))}<div class="actions left"><button class="primary" data-act="help">${esc(t('res.talkLower'))}</button></div></div>`;
   } else if (R.noGov && R.wantsMoney) {
     const cg = R.fin.some((r) => enablersFor(r, f).length);
-    h += `<div class="banner"><b>${esc(t('res.noGov.t'))}</b>${esc(t('res.noGov.b'))}${cg ? esc(t('res.noGov.cg')) : ''}<div class="small" style="margin-top:6px">${esc(t('res.noGov.cov', { n: CORPUS.filter((p) => p.family === 'gov').length }))}</div></div>`;
+    h += `<div class="banner"><b>${esc(t('res.noGov.t'))}</b>${esc(t('res.noGov.b'))}${cg ? g(t('res.noGov.cg')) : ''}<div class="small expert-only">${esc(t('res.noGov.cov', { n: CORPUS.filter((p) => p.family === 'gov').length }))}</div></div>`;
   }
   if (V(f, 'udyam') === 'no') {
     const needU = R.top.filter((r) => r.conds.some((c) => c.slot === 'udyam'));
     h += `<div class="note"><b>${esc(t('res.udyam.t'))}</b> ${esc(needU.length ? t('res.udyam.some', { list: needU.map((r) => nameOf(r.p)).join(', ') }) : t('res.udyam.none'))} <a href="https://udyamregistration.gov.in/" target="_blank" rel="noopener">udyamregistration.gov.in ↗</a></div>`;
   }
-  if (R.gov.length) h += `<section class="group"><h3>${esc(t('res.gov'))} <span class="chip b">${R.gov.length}</span></h3><div class="cards">${R.gov.map(card).join('')}</div></section>`;
-  if (R.fin.length) h += `<section class="group"><h3>${esc(t('res.fin'))} <span class="chip">${R.fin.length}</span></h3><p class="small">${esc(t('res.finNote'))}</p><div class="cards">${R.fin.map(card).join('')}</div></section>`;
-  if (R.top.length) {
+  const [best, ...others] = R.top;
+  if (best) h += bestCard(best);
+  if (others.length) h += `<section class="group"><h3>${esc(t('res.others'))}</h3><div class="cards">${others.map(optionCard).join('')}</div></section>`;
+  if (R.top.length > 1) {
     const check = (r) => r.conds.filter((c) => (c.state === 'unknown' || c.state === 'todo') && c.slot !== 'lender').map((c) => tc(c.text).split(' — ')[0]).slice(0, 2).join('; ') || t(r.conds.some((c) => c.slot === 'lender') ? 'check.lender' : 'check.confirmTerms');
-    h += `<section class="group"><h3>${esc(t('res.side'))}</h3><div class="tablewrap"><table><thead><tr><th>${esc(t('th.route'))}</th><th>${esc(t('th.why'))}</th><th>${esc(t('th.check'))}</th><th>${esc(t('th.how'))}</th><th>${esc(t('th.next'))}</th></tr></thead><tbody>
-      ${R.top.map((r) => `<tr><td><b>${esc(nameOf(r.p))}</b><br><span class="small">${esc(fitL(r.fit))}</span></td><td>${esc(r.need ? needL(r.need) : '')}</td><td>${esc(check(r))}</td><td>${esc(t('speed.' + r.p.speed))} · ${esc(t('steps', { n: r.p.steps }))}</td><td>${esc(tc(r.p.route.text))}</td></tr>`).join('')}
-      </tbody></table></div>
-      <p class="small">${esc(t('res.noBest'))}</p></section>`;
+    h += `<details><summary>${esc(t('res.compare'))}</summary><div class="tablewrap"><table><thead><tr><th>${esc(t('th.route'))}</th><th>${esc(t('th.check'))}</th><th>${esc(t('th.how'))}</th><th>${esc(t('th.next'))}</th></tr></thead><tbody>
+      ${R.top.map((r) => `<tr><td><b>${esc(nameOf(r.p))}</b><br>${badge(r)}</td><td>${esc(check(r))}</td><td>${esc(t('speed.' + r.p.speed))} · ${esc(t('steps', { n: r.p.steps }))}</td><td>${esc(tc(r.p.next))}</td></tr>`).join('')}
+      </tbody></table></div><p class="small">${esc(t('res.noBest'))}</p></details>`;
   }
-  const help = helpReasons(R);
-  if (help.length) h += `<div class="banner help"><b>${esc(t('help.t'))}</b>${esc(help.join(' '))}<div class="actions left"><button class="ghost" data-act="saathi">${esc(t('res.talkLower'))}</button></div></div>`;
   if (R.hidden.length) h += `<details><summary>${esc(t('hidden.sum', { n: R.hidden.length }))}</summary><ul class="list no">${R.hidden.map((r) => `<li><b>${esc(nameOf(r.p))}</b> — ${esc(reasonText(r))}</li>`).join('')}</ul></details>`;
-  h += `<div class="warn"><b>${esc(t('res.warn.t'))}</b> ${esc(t('res.warn.b'))}</div>
-    <div class="actions"><a class="btn secondary" href="#/check">${esc(t('res.back'))}</a><a class="btn primary" href="#/my-msme">${esc(t('res.openMy'))}</a></div>`;
+  const help = helpReasons(R);
+  if (help.length) h += `<div class="banner help"><b>${esc(t('help.t'))}</b>${esc(help.join(' '))}<div class="actions left"><button class="ghost" data-act="help">${esc(t('res.talkLower'))}</button></div></div>`;
+  h += `<div class="warn"><b>${esc(t('res.warn.t'))}</b> ${esc(t('res.warn.b'))}${t('translationNote') ? ' ' + esc(t('translationNote')) : ''}</div>
+    <p><a class="link" href="#/check">${esc(t('res.back'))}</a></p>`;
+  if (best) h += ctaBar(`<button class="primary" data-act="explore" data-id="${best.id}">${esc(t('cta.getReady', { n: nameOf(best.p) }))}</button>`);
   return h;
 }
 
-/* ---------------- Action plan ---------------- */
-export function checklistItems(id) {
+/* ---------------- ④ Get ready ---------------- */
+// Papers = documents to collect (+ fixable to-dos like Udyam). Confirms = conditions to check with the bank/office.
+export function readyItems(id) {
   const p = byId(id);
   const r = evaluate(p, S.facts);
   const conds = r ? r.conds : [];
-  // Keys stay in English so ticks survive a language switch.
-  return [
-    ...conds.filter((c) => c.state === 'unknown' || c.state === 'todo').map((c) => ['v:' + c.text, t('act.confirm', { x: tc(c.text) }), c.basis]),
-    ...(p.info || []).map(([d, b]) => ['d:' + d, tc(d), b]),
+  const lang = getLang();
+  const papers = [
+    ...(p.info || []).map(([d, b]) => ({ key: 'd:' + d, text: tc(d), basis: b, help: docHelp(d, lang) })),
+    ...conds.filter((c) => c.state === 'todo').map((c) => ({ key: 'v:' + c.text, text: tc(c.text), basis: c.basis, help: c.slot === 'udyam' ? docHelp('Udyam certificate', lang) : null })),
   ];
+  const confirms = conds.filter((c) => c.state === 'unknown').map((c) => tc(c.text));
+  return { p, papers, confirms };
 }
-function stepper(id) {
-  const st = S.tracked[id], names = t('stages');
-  return `<div class="steps">${names.map((s, i) => `<button class="step ${i < st.stage ? 'done' : i === st.stage ? 'cur' : ''}" data-act="stage" data-id="${id}" data-i="${i}">${esc(s)}</button>${i < names.length - 1 ? '<span class="arrow">→</span>' : ''}`).join('')}</div>`;
+export const paperState = (id, key) => {
+  const tr = S.tracked[id];
+  return tr?.docs?.[key] || (tr?.done?.[key] ? 'have' : null);
+};
+function paperItem(id, it) {
+  const st = paperState(id, it.key);
+  return `<div class="paper ${st === 'need' ? 'need' : ''}">
+    <div>${g(it.text)} ${it.basis === 'typical' ? `<span class="chip">${esc(t('act.typicalConfirm'))}</span>` : ''}</div>
+    <div class="row"><button class="secondary ${st === 'have' ? 'sel' : ''}" data-act="doc" data-id="${id}" data-k="${esc(it.key)}" data-v="have">${esc(t('ready.have'))}</button><button class="secondary ${st === 'need' ? 'sel' : ''}" data-act="doc" data-id="${id}" data-k="${esc(it.key)}" data-v="need">${esc(t('ready.need'))}</button></div>
+    ${st === 'need' ? `<p class="small howget"><b>${esc(t('ready.howGet'))}</b> ${g(it.help ? it.help.how : t('ready.noHelp'))}</p>` : ''}
+    <details class="what"><summary>${esc(t('ready.what'))}</summary><p class="small">${g(it.help ? it.help.what : t('ready.whatNone'))}</p></details>
+  </div>`;
 }
-export function actionView(id) {
-  const p = byId(id), st = S.tracked[id];
-  const items = checklistItems(id);
+export function readyView(id) {
+  const { p, papers, confirms } = readyItems(id);
+  const pending = papers.filter((it) => paperState(id, it.key) !== 'have');
+  const done = papers.filter((it) => paperState(id, it.key) === 'have');
+  const asks = t(p.asks === 'loan' ? 'lenderAsks' : 'officeAsks');
   const inPerson = p.access !== 'online';
-  return `<h2>${esc(t('act.h2', { n: nameOf(p) }))}</h2><p class="sub">${esc(t('act.sub'))}</p>${stepper(id)}
-  <div class="dash"><div class="box"><h3>${esc(t('act.verify'))}</h3>
-    ${items.map(([k, l, b]) => `<label class="check"><input type="checkbox" data-act="tick" data-id="${id}" data-k="${esc(k)}" ${st.done[k] ? 'checked' : ''}><span>${esc(l)} ${b === 'typical' ? `<span class="chip">${esc(t('act.typicalConfirm'))}</span>` : ''}</span></label>`).join('') || `<p class="small">${esc(t('act.nothing'))}</p>`}
-    <h3 style="margin-top:16px">${esc(t('act.route'))}</h3><p>${esc(tc(p.route.text))}${p.route.url ? `<br><a href="${p.route.url}" target="_blank" rel="noopener">${esc(p.route.url)} ↗</a>` : ''}</p>
-    <h3 style="margin-top:16px">${esc(t(p.asks === 'loan' ? 'act.askLender' : 'act.askOffice'))}</h3><ul class="small">${t(p.asks === 'loan' ? 'lenderAsks' : 'officeAsks').map((q) => '<li>' + esc(q) + '</li>').join('')}</ul></div>
-  <div class="box">${inPerson
-    ? `<h3>${esc(t('act.nearT'))}</h3><p class="small">${esc(t('act.nearS'))}</p><form class="row" data-form="pin" data-id="${id}"><input id="pin" class="grow" maxlength="6" inputmode="numeric" placeholder="${esc(t('act.pinPh'))}" aria-label="${esc(t('act.pinPh'))}"><button class="ghost" type="submit">${esc(t('act.search'))}</button></form><div id="near" aria-live="polite"></div>`
-    : `<h3>${esc(t('act.onlineT'))}</h3><p class="small">${esc(t('act.onlineS'))}</p>`}
-    <hr><h3>${esc(t('act.helpT'))}</h3><p class="small">${esc(t('act.helpS'))}</p><button class="ghost" data-act="saathi">${esc(t('act.note'))}</button></div></div>
-  <div class="actions"><a class="btn secondary" href="#/results">${esc(t('act.back'))}</a><a class="btn primary" href="#/my-msme">${esc(t('act.save'))}</a></div>`;
+  const used = new Set();
+  return `<h2>${esc(t('ready.h2', { n: nameOf(p) }))}</h2>
+  <p>${g(tc(p.short), used)}</p><p class="small">${esc(t('ready.sub'))}</p>
+  <section class="box" id="papers"><div class="row split"><h3>${esc(t('ready.papers'))}</h3><span class="small">${esc(t('ready.progress', { d: done.length, n: papers.length }))}</span></div>
+    <div class="progress"><i style="width:${papers.length ? Math.round((done.length / papers.length) * 100) : 100}%"></i></div>
+    ${pending.map((it) => paperItem(id, it)).join('')}
+    ${done.length ? `<details><summary>✓ ${esc(t('ready.done', { n: done.length }))}</summary><ul class="list met">${done.map((it) => `<li>${esc(it.text)} <button class="link mute" data-act="doc" data-id="${id}" data-k="${esc(it.key)}" data-v="">${esc(t('ready.undo'))}</button></li>`).join('')}</ul></details>` : ''}
+    ${readBtn('papers')}
+  </section>
+  <section class="box"><h3>${esc(t('ready.confirm'))}</h3><ul class="small">${[...confirms, ...asks].slice(0, 7).map((q) => `<li>${g(q)}</li>`).join('')}</ul></section>
+  <section class="box"><h3>${esc(t('ready.where'))}</h3>
+    <p>${g(tc(p.next))}${p.route.url ? `<br><a href="${p.route.url}" target="_blank" rel="noopener">${esc(p.route.url.replace(/^https?:\/\//, '').replace(/\/$/, ''))} ↗</a>` : ''}</p>
+    ${inPerson ? `<p class="small">${esc(t('act.nearS'))}</p><form class="row" data-form="pin" data-id="${id}"><input id="pin" class="grow" maxlength="6" inputmode="numeric" placeholder="${esc(t('act.pinPh'))}" aria-label="${esc(t('act.pinPh'))}"><button class="ghost" type="submit">${esc(t('act.search'))}</button></form><div id="near" aria-live="polite"></div>` : ''}
+  </section>
+  <section class="box sheetbox"><button class="primary" data-act="sheet" data-id="${id}">${esc(t('ready.sheet'))}</button><p class="small">${esc(t('ready.sheetS'))}</p></section>
+  <p><a class="link" href="#/results">${esc(t('act.back'))}</a></p>
+  ${ctaBar(`<a class="btn primary" href="#/track/${id}">${esc(t('cta.applied'))}</a>`)}`;
 }
 export function nearbyHtml(id, pin) {
   const p = byId(id);
@@ -244,42 +321,62 @@ export function nearbyHtml(id, pin) {
   return `<ul class="small">${kinds.map((k) => `<li><a target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(STRINGS.en['near.' + k] + ' near ' + pin)}">${esc(t('near.fmt', { x: t('near.' + k), pin }))} ↗</a></li>`).join('')}</ul><p class="small">${esc(t('near.note'))}</p>`;
 }
 
-/* ---------------- Dashboard ---------------- */
+/* ---------------- ⑤ Apply & track ---------------- */
+export function trackView(id) {
+  const p = byId(id), o = S.tracked[id]?.outcome;
+  const opts = t('track.opts');
+  let resp = '';
+  if (o === 'notyet') resp = `<p>${esc(t('track.notyet'))}</p><div class="row"><a class="btn secondary" href="#/explore/${id}">${esc(t('track.notyetBtn'))}</a><button class="ghost" data-act="sheet" data-id="${id}">${esc(t('ready.sheet'))}</button></div>`;
+  else if (o === 'waiting') resp = `<p>${esc(t('track.waiting'))}</p>`;
+  else if (o === 'approved') resp = `<p class="big">${esc(t('track.approved'))}</p><p>${esc(t('track.approvedQ'))}</p><button class="secondary" data-act="new-need">${esc(t('track.newNeed'))}</button>`;
+  else if (o === 'rejected') {
+    const others = rank(S.facts).top.filter((r) => r.id !== id).slice(0, 3);
+    resp = `<p>${esc(t('track.rejected'))}</p><p class="small">${esc(t('track.rejectedAsk'))}</p>
+      ${others.length ? `<h3>${esc(t('track.others'))}</h3>${others.map((r) => `<div class="paper"><b>${esc(nameOf(r.p))}</b> ${badge(r)}<p class="small">${g(tc(r.p.short))}</p><button class="ghost" data-act="explore" data-id="${r.id}">${esc(t('card.getReady'))}</button></div>`).join('')}` : ''}
+      <button class="ghost" data-act="help">${esc(t('res.talkLower'))}</button>`;
+  }
+  return `<h2>${esc(t('track.h2', { n: nameOf(p) }))}</h2><p class="sub">${esc(t('track.sub'))}</p>
+    <div class="opts">${OUTCOMES.map((k, i) => `<button class="opt ${o === k ? 'sel' : ''}" data-act="outcome" data-id="${id}" data-v="${k}">${esc(opts[i])}</button>`).join('')}</div>
+    ${resp ? `<div class="box" aria-live="polite">${resp}</div>` : ''}
+    ${ctaBar(`<a class="btn primary" href="#/my-msme">${esc(t('cta.myMsme'))}</a>`)}`;
+}
+
+/* ---------------- My MSME ---------------- */
 export function dashView(changed = '') {
-  if (!S.story) return `<h2>${esc(t('dash.h2'))}</h2><p class="sub">${esc(t('dash.empty'))}</p><a class="btn primary" href="#/">${esc(t('dash.start'))}</a>`;
+  if (!S.story) return `<h2>${esc(t('dash.h2'))}</h2><p class="sub">${esc(t('dash.empty'))}</p>${ctaBar(`<a class="btn primary" href="#/">${esc(t('dash.start'))}</a>`)}`;
   const f = S.facts, R = rank(f), ids = Object.keys(S.tracked);
   const slots = openSlots(f).slice(0, 4);
-  const maxStage = Math.max(1, ...ids.map((id) => S.tracked[id].stage));
   const tracked = ids.length
     ? ids.map((id) => {
-        const p = byId(id), items = checklistItems(id), st = S.tracked[id];
-        const done = items.filter(([k]) => st.done[k]).length;
-        return `<div style="border-top:1px solid var(--line);padding:10px 0"><div class="row" style="justify-content:space-between"><b>${esc(nameOf(p))}</b><span class="small">${esc(t('dash.ready', { d: done, n: items.length }))}</span></div>${stepper(id)}
-          <a class="link" href="#/explore/${id}">${esc(t('dash.open'))}</a><button class="link mute" data-act="untrack" data-id="${id}">${esc(t('dash.remove'))}</button></div>`;
+        const { papers } = readyItems(id), o = S.tracked[id].outcome;
+        const done = papers.filter((it) => paperState(id, it.key) === 'have').length;
+        return `<div class="trow"><b>${esc(nameOf(byId(id)))}</b><div class="small">${esc(t('dash.papers', { d: done, n: papers.length }))}${o ? ' · ' + esc(t('dash.outcome', { x: outcomeL(o) })) : ''}</div>
+          <div class="row"><a class="btn secondary" href="#/explore/${id}">${esc(t('dash.getReady'))}</a><a class="btn secondary" href="#/track/${id}">${esc(t('dash.what'))}</a><button class="link mute" data-act="untrack" data-id="${id}">${esc(t('dash.remove'))}</button></div></div>`;
       }).join('')
     : `<p class="small">${esc(t('dash.none'))} ${R.top.slice(0, 3).map((r) => `<button class="link" data-act="explore" data-id="${r.id}">${esc(nameOf(r.p))}</button>`).join(' · ') || '—'}</p>`;
   return `<h2>${esc(t('dash.h2'))}</h2><p class="sub">${esc(t('dash.sub'))}</p>
+  ${continueCard()}
   <div class="dash"><div class="stack">
-    <div class="box"><h3>${esc(t('dash.need'))}</h3><p style="margin:0 0 8px">“${esc(S.story)}”</p>${knownKeys(f).map((k) => `<span class="chip">${esc(label(k))}: ${esc(fmt(k, V(f, k)))}</span>`).join('')}</div>
+    <div class="box"><h3>${esc(t('dash.need'))}</h3><p style="margin:0 0 8px">“${esc(S.story)}”</p>${chipStrip()}</div>
     <div class="box"><h3>${esc(t('dash.routes'))}</h3>${tracked}</div>
     <div class="box"><h3>${esc(t('dash.firm'))}</h3>${slots.length
       ? `<p class="small">${esc(t('dash.firmS'))}</p>${slots.map((s) => `<div class="enrich"><b class="small">${esc(qText(s))}</b><div class="row">${QUESTIONS[s].opts.map(([v]) => `<button class="secondary" data-act="enrich" data-slot="${s}" data-v="${attr(v)}">${esc(optL(s, v))}</button>`).join('')}</div></div>`).join('')}`
       : `<p class="small">${esc(t('dash.firmNone'))}</p>`}
       <div id="changed" aria-live="polite">${changed}</div></div>
   </div><div class="stack">
-    <div class="box"><h3>${esc(t('dash.journey'))}</h3><div class="steps">${t('journey').map((s, i) => `<span class="step ${i <= maxStage ? 'done' : ''}">${esc(s)}</span>`).join('<span class="arrow">↓</span>')}</div></div>
-    <div class="box"><h3>${esc(t('saathi.h2'))}</h3><p class="small">${esc(t('dash.saathiS'))}</p><button class="ghost" data-act="saathi">${esc(t('dash.prepare'))}</button></div>
+    <div class="box"><h3>${esc(t('saathi.h2'))}</h3><p class="small">${esc(t('dash.saathiS'))}</p><button class="ghost" data-act="help">${esc(t('dash.prepare'))}</button></div>
     <div class="box"><h3>${esc(t('dash.activity'))}</h3><ul class="small" style="padding-left:18px;margin:0">${S.log.slice(0, 8).map((l) => `<li>${esc(l.t)} <span style="color:#98a2b3">· ${esc(l.at)}</span></li>`).join('') || `<li>${esc(t('dash.nothing'))}</li>`}</ul></div>
     <div class="box"><h3>${esc(t('dash.later'))}</h3><p class="small">${esc(t('dash.laterS'))}</p></div>
   </div></div>
-  <div class="actions"><a class="btn secondary" href="#/results">${esc(t('dash.view'))}</a><button class="secondary" data-act="reset">${esc(t('dash.clear'))}</button><button class="primary" data-act="new-need">${esc(t('dash.new'))}</button></div>`;
+  <div class="actions"><a class="btn secondary" href="#/results">${esc(t('dash.view'))}</a><button class="secondary" data-act="reset">${esc(t('dash.clear'))}</button></div>
+  ${ctaBar(`<button class="primary" data-act="new-need">${esc(t('dash.new'))}</button>`)}`;
 }
 
-/* ---------------- Modals ---------------- */
+/* ---------------- Shareable texts ---------------- */
 export function handoffText() {
-  const f = S.facts, R = rank(f), stages = t('stages');
+  const f = S.facts, R = rank(f);
   const known = knownKeys(f).map((k) => `- ${label(k)}: ${fmt(k, V(f, k))}`);
-  const tracked = Object.keys(S.tracked).map((id) => `- ${nameOf(byId(id))} (${stages[S.tracked[id].stage]})`);
+  const tracked = Object.keys(S.tracked).map((id) => `- ${nameOf(byId(id))}${S.tracked[id].outcome ? ` (${outcomeL(S.tracked[id].outcome)})` : ''}`);
   const open = [...new Set(R.top.slice(0, 3).flatMap((r) => r.conds.filter((c) => c.state === 'unknown').map((c) => tc(c.text))))].slice(0, 6).map((x) => '- ' + x);
   return `${t('hand.title')}
 ${t('hand.words')}: "${S.story}"
@@ -295,13 +392,60 @@ ${open.join('\n') || '- ' + t('hand.nothing')}
 
 ${t('hand.note')}`;
 }
-export function saathiModal() {
-  return `<h2>${esc(t('saathi.h2'))}</h2><p class="sub">${esc(t('saathi.sub'))}</p>
+export function sheetText(id) {
+  const f = S.facts;
+  const { p, papers, confirms } = readyItems(id);
+  const asks = t(p.asks === 'loan' ? 'lenderAsks' : 'officeAsks');
+  const a = V(f, 'amount');
+  const mark = (it) => { const st = paperState(id, it.key); return st === 'have' ? `✓ ${it.text} (${t('sheet.have')})` : st === 'need' ? `✗ ${it.text} (${t('sheet.need')})` : `• ${it.text}`; };
+  return `${t('sheet.title')}
+
+${t('sheet.business')}:
+${knownKeys(f).filter((k) => k !== 'need').map((k) => `- ${label(k)}: ${fmt(k, V(f, k))}`).join('\n') || '- ' + t('hand.little')}
+
+${t('sheet.asking')}: ${nameOf(p)}
+${needsOf(f).length ? `- ${label('need')}: ${fmt('need', needsOf(f))}\n` : ''}${a != null ? `- ${t('sheet.amount')}: ${money(a)}\n` : ''}
+${t('sheet.papers')}:
+${papers.map(mark).join('\n')}
+
+${t('sheet.questions')}:
+${[...confirms, ...asks].slice(0, 7).map((q) => '- ' + q).join('\n')}
+
+${t('hand.note')}`;
+}
+
+/* ---------------- Modals ---------------- */
+const shareRow = (src, id = '') => `<div class="actions"><span class="small ok" id="copied" aria-live="polite"></span>
+  <button class="secondary" data-act="copy" data-src="${src}" data-id="${id}">${esc(t('share.copy'))}</button>
+  <button class="secondary" data-act="print">${esc(t('share.print'))}</button>
+  <button class="primary" data-act="share-wa" data-src="${src}" data-id="${id}">${esc(t('share.wa'))}</button></div>`;
+export function helpModal() {
+  return `<h2>${esc(t('help.h2'))}</h2><p class="sub">${esc(t('help.sub'))}</p>
+  <h3>${esc(t('saathi.h2'))}</h3><p class="small">${esc(t('saathi.sub'))}</p>
   <div class="cols"><div><b class="small">${esc(t('saathi.will'))}</b><ul class="list met">${t('saathi.willList').map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>
   <div><b class="small">${esc(t('saathi.wont'))}</b><ul class="list no">${t('saathi.wontList').map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div></div>
-  <h3 style="margin-top:14px">${esc(t('saathi.noteH'))}</h3><pre class="hand" id="hand">${esc(handoffText())}</pre>
-  <div class="actions"><span class="small ok" id="copied" aria-live="polite"></span><button class="secondary" data-act="copy-hand">${esc(t('saathi.copy'))}</button><button class="primary" data-act="close-modal">${esc(t('saathi.done'))}</button></div>
-  <p class="small">${esc(t('saathi.foot'))} ${SUPPORT.map((s) => (s.url ? `<a href="${s.url}" target="_blank" rel="noopener">${esc(tc(s.name))}</a>` : esc(tc(s.name)))).join(' · ')}.</p>`;
+  ${S.story ? `<h3 style="margin-top:14px">${esc(t('saathi.noteH'))}</h3><pre class="hand printable" id="shareText">${esc(handoffText())}</pre>${shareRow('hand')}` : ''}
+  <p class="small">${esc(t('saathi.foot'))}</p>
+  <h3>${esc(t('help.official'))}</h3><ul class="small">${SUPPORT.map((s) => `<li>${s.url ? `<a href="${s.url}" target="_blank" rel="noopener">${esc(tc(s.name))}</a>` : esc(tc(s.name))} — ${esc(tc(s.plain))}</li>`).join('')}<li><a href="https://udyamregistration.gov.in/" target="_blank" rel="noopener">${esc(tc('Udyam Registration'))}</a></li></ul>
+  <p class="trust">🔒 ${esc(t('start.trust'))}</p>
+  <div class="actions"><button class="secondary" data-act="close-modal">${esc(t('saathi.done'))}</button></div>`;
+}
+export function sheetModal(id) {
+  return `<h2>${esc(t('ready.sheet'))}</h2><p class="small">${esc(t('ready.sheetS'))}</p>
+  <pre class="hand printable" id="shareText">${esc(sheetText(id))}</pre>${shareRow('sheet', id)}
+  <div class="actions"><button class="secondary" data-act="close-modal">${esc(t('saathi.done'))}</button></div>`;
+}
+export function termModal(id) {
+  const x = termById(id);
+  if (!x) return '';
+  const lang = getLang();
+  return `<h2>${esc(x.t[lang] || x.t.en)}</h2><p>${esc(x[lang] || x.en)}</p><div class="actions"><button class="primary" data-act="close-modal">${esc(t('term.close'))}</button></div>`;
+}
+export function chipModal(k) {
+  const assumed = S.facts[k]?.o === 'inferred';
+  const val = fmt(k, V(S.facts, k));
+  return `<h2>${esc(label(k))}</h2><p>${esc(assumed ? t('chips.confirmQ', { x: val }) : val)}</p>
+  <div class="actions">${assumed ? `<button class="secondary" data-act="chip-yes" data-k="${k}">${esc(t('chips.yes'))}</button>` : ''}<button class="primary" data-act="chip-no" data-k="${k}">${esc(assumed ? t('chips.no') : t('chips.edit', { x: label(k) }))}</button></div>`;
 }
 export function aboutModal() {
   const gov = CORPUS.filter((p) => p.family === 'gov' && p.type === 'direct');
