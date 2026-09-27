@@ -2,12 +2,13 @@ import './styles.css';
 import { S, save, resetAll, startNewJourney, logEvent } from './state.js';
 import * as api from './api.js';
 import {
-  QUESTIONS, byId, rank, pickQuestion, ruleUnderstand, factsFromExtraction, finaliseFacts, parseAmount, STATUS,
+  QUESTIONS, byId, rank, pickQuestion, ruleUnderstand, factsFromExtraction, finaliseFacts, parseAmount,
 } from './engine/index.js';
 import {
-  TILES, DEMOS, LABEL, fmt, startView, understandView, questionView, resultsView, actionView, dashView,
-  nearbyHtml, saathiModal, aboutModal, STAGES,
+  esc, label, fmt, startView, understandView, questionView, resultsView, actionView, dashView,
+  nearbyHtml, saathiModal, aboutModal,
 } from './ui/views.js';
+import { t, tc, getLang, setLang, LANGS } from './i18n/index.js';
 
 const $ = (id) => document.getElementById(id);
 const view = $('view');
@@ -15,7 +16,7 @@ const env = { ai: false, canRecord: !!(navigator.mediaDevices?.getUserMedia && w
 
 /* ---------------- Routing ---------------- */
 // #/  #/check  #/question  #/results  #/explore/:id  #/my-msme
-function route() {
+function route({ keepScroll = false } = {}) {
   const [, name = '', arg] = location.hash.split('/');
   const needsStory = ['check', 'question', 'results', 'explore'].includes(name);
   if (needsStory && !S.story) return redirect('#/');
@@ -34,7 +35,7 @@ function route() {
     default: html = startView(env);
   }
   view.innerHTML = html;
-  window.scrollTo(0, 0);
+  if (!keepScroll) window.scrollTo(0, 0);
   view.focus({ preventScroll: true });
 }
 // Replace the current history entry (no Back-button trap) and render.
@@ -53,18 +54,18 @@ async function startJourney(text) {
   text = (text ?? $('story')?.value ?? '').trim();
   if (!text) {
     const el = $('story');
-    if (el) { el.focus(); el.placeholder = "Write a line about your business — or tap “I don't know” below."; }
+    if (el) { el.focus(); el.placeholder = t('start.empty'); }
     return;
   }
   const btn = $('goBtn');
-  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Understanding…'; }
+  if (btn) { btn.disabled = true; btn.innerHTML = `<span class="spinner"></span>${esc(t('start.understanding'))}`; }
   startNewJourney(text);
   let facts = null;
   if (env.ai) {
     try {
-      const x = await api.understand(text);
+      const x = await api.understand(text, getLang());
       facts = factsFromExtraction(x);
-      S.summary = x.summary_en || '';
+      S.summary = x.summary || '';
     } catch (e) {
       console.warn('AI understanding unavailable, using rules:', e.message);
     }
@@ -96,13 +97,13 @@ function showResults() {
   const R = rank(S.facts);
   S.lastTop = R.top.map((r) => r.id);
   S.curQ = null;
-  logEvent('Checked options: ' + (R.top.slice(0, 3).map((r) => r.p.name).join(', ') || 'none found'));
+  logEvent(t('log.checked', { x: R.top.slice(0, 3).map((r) => tc(r.p.name)).join(', ') || t('log.none') }));
   navigate('#/results');
 }
 
 function track(id) {
   S.tracked[id] = { stage: 1, done: {}, added: new Date().toISOString() };
-  logEvent('Started exploring ' + byId(id).name);
+  logEvent(t('log.started', { n: tc(byId(id).name) }));
 }
 
 function enrich(slot, v) {
@@ -112,15 +113,14 @@ function enrich(slot, v) {
   const R = rank(S.facts);
   const after = R.top.slice(0, 4).map(key);
   const idOf = (x) => x.split(':')[0];
-  const name = (x) => byId(idOf(x)).name;
+  const name = (x) => tc(byId(idOf(x)).name);
   const msgs = [];
-  after.filter((x) => !before.some((b) => idOf(b) === idOf(x))).forEach((x) => msgs.push('Now showing: ' + name(x)));
-  before.filter((x) => !after.some((a) => idOf(a) === idOf(x))).forEach((x) => msgs.push('No longer showing: ' + name(x)));
-  after.forEach((x) => { const b = before.find((y) => idOf(y) === idOf(x)); if (b && b !== x) msgs.push(`${name(x)}: ${STATUS[x.split(':')[1]][1].toLowerCase()}`); });
+  after.filter((x) => !before.some((b) => idOf(b) === idOf(x))).forEach((x) => msgs.push(t('changed.now', { n: name(x) })));
+  before.filter((x) => !after.some((a) => idOf(a) === idOf(x))).forEach((x) => msgs.push(t('changed.gone', { n: name(x) })));
+  after.forEach((x) => { const b = before.find((y) => idOf(y) === idOf(x)); if (b && b !== x) msgs.push(`${name(x)}: ${t('status.' + x.split(':')[1])}`); });
   S.lastTop = R.top.map((r) => r.id);
-  logEvent(`Added: ${LABEL[slot]} = ${fmt(slot, v)}`);
-  const esc = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
-  view.innerHTML = dashView(`<div class="note"><b>What changed:</b> ${msgs.length ? msgs.map(esc).join(' · ') : "No change to your matches — but we've recorded it."}</div>`);
+  logEvent(t('log.added', { l: label(slot), v: fmt(slot, v) }));
+  view.innerHTML = dashView(`<div class="note"><b>${esc(t('changed.t'))}</b> ${msgs.length ? msgs.map(esc).join(' · ') : esc(t('changed.none'))}</div>`);
 }
 
 /* ---------------- Modal ---------------- */
@@ -150,27 +150,28 @@ async function toggleMic() {
     recorder.ondataavailable = (e) => chunks.push(e.data);
     recorder.onstop = async () => {
       stream.getTracks().forEach((t) => t.stop());
-      btn.classList.remove('rec'); btn.textContent = '🎙 Speak instead';
-      note.textContent = 'Transcribing…';
+      btn.classList.remove('rec'); btn.textContent = t('start.mic');
+      note.textContent = t('mic.transcribing');
       try {
         const text = await api.transcribe(new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }));
         $('story').value = ($('story').value + ' ' + text).trim();
-        note.textContent = 'Check the text, then Continue.';
-      } catch (e) { note.textContent = 'Could not transcribe: ' + e.message; }
+        note.textContent = t('mic.check');
+      } catch (e) { note.textContent = t('mic.fail', { e: e.message }); }
     };
     recorder.start();
-    btn.classList.add('rec'); btn.textContent = '■ Stop';
-    note.textContent = 'Listening… speak in any language. Tap Stop when done.';
+    btn.classList.add('rec'); btn.textContent = t('start.stop');
+    note.textContent = t('mic.listening');
   } catch (e) {
-    note.textContent = 'Microphone not available: ' + e.message;
+    note.textContent = t('mic.unavailable', { e: e.message });
   }
 }
 
 /* ---------------- Actions (event delegation) ---------------- */
 const ACTIONS = {
   start: () => startJourney(),
-  tile: (d) => startJourney(TILES[+d.i][2]),
-  demo: (d) => { $('story').value = DEMOS[+d.i][1]; $('story').focus(); },
+  tile: (d) => startJourney(t('tiles')[+d.i][2]),
+  demo: (d) => { $('story').value = t('demos')[+d.i][1]; $('story').focus(); },
+  lang: () => switchLang(getLang() === 'hi' ? 'en' : 'hi'),
   mic: toggleMic,
   'drop-fact': (d) => { delete S.facts[d.k]; S.asked = S.asked.filter((s) => s !== d.k); save(); route(); },
   confirm: () => { S.asked = S.asked.filter((s) => s === 'need' || S.facts[s] !== undefined); nextQuestion(); },
@@ -179,18 +180,18 @@ const ACTIONS = {
   'show-results': showResults,
   explore: (d) => navigate('#/explore/' + d.id),
   'toggle-score': (d, el) => { const p = $('sc-' + d.id); p.hidden = !p.hidden; el.setAttribute('aria-expanded', String(!p.hidden)); },
-  stage: (d) => { S.tracked[d.id].stage = +d.i; logEvent(`${byId(d.id).name} → ${STAGES[+d.i]}`); save(); route(); },
+  stage: (d) => { S.tracked[d.id].stage = +d.i; logEvent(`${tc(byId(d.id).name)} → ${t('stages')[+d.i]}`); save(); route(); },
   untrack: (d) => { delete S.tracked[d.id]; save(); route(); },
   enrich: (d) => enrich(d.slot, JSON.parse(d.v)),
   saathi: () => openModal(saathiModal()),
   about: () => openModal(aboutModal()),
   'close-modal': closeModal,
   'copy-hand': async () => {
-    try { await navigator.clipboard.writeText($('hand').textContent); $('copied').textContent = 'Copied.'; }
-    catch { const r = document.createRange(); r.selectNodeContents($('hand')); getSelection().removeAllRanges(); getSelection().addRange(r); $('copied').textContent = 'Selected — press Ctrl/Cmd+C.'; }
+    try { await navigator.clipboard.writeText($('hand').textContent); $('copied').textContent = t('saathi.copied'); }
+    catch { const r = document.createRange(); r.selectNodeContents($('hand')); getSelection().removeAllRanges(); getSelection().addRange(r); $('copied').textContent = t('saathi.selected'); }
   },
   reset: (d, el) => {
-    if (el.dataset.confirm !== '1') { el.dataset.confirm = '1'; el.textContent = 'Click again to delete everything'; el.classList.add('primary'); return; }
+    if (el.dataset.confirm !== '1') { el.dataset.confirm = '1'; el.textContent = t('dash.clearConfirm'); el.classList.add('primary'); return; }
     resetAll(); navigate('#/');
   },
   'new-need': () => { S.story = ''; save(); navigate('#/'); },
@@ -211,12 +212,12 @@ document.addEventListener('submit', (e) => {
   if (form.dataset.form === 'amount') {
     e.preventDefault();
     const a = parseAmount($('amtIn').value);
-    if (!a) { $('amtErr').textContent = 'Try e.g. “8 lakh” or “250000”.'; return; }
+    if (!a) { $('amtErr').textContent = t('q.amountErr'); return; }
     answer('amount', a);
   } else if (form.dataset.form === 'pin') {
     e.preventDefault();
     const pin = $('pin').value.trim();
-    $('near').innerHTML = /^\d{6}$/.test(pin) ? nearbyHtml(form.dataset.id, pin) : '<p class="small err">Please enter a 6-digit pincode.</p>';
+    $('near').innerHTML = /^\d{6}$/.test(pin) ? nearbyHtml(form.dataset.id, pin) : `<p class="small err">${esc(t('pin.err'))}</p>`;
   }
 });
 // Ctrl/Cmd+Enter submits the story.
@@ -227,12 +228,37 @@ document.addEventListener('keydown', (e) => {
 /* ---------------- Boot ---------------- */
 function setPill() {
   const p = $('aiPill');
-  p.textContent = env.ai ? 'AI understanding: on' : 'Rule-based mode';
+  p.textContent = env.checked ? t(env.ai ? 'ai.on' : 'ai.off') : t('ai.checking');
+  p.title = t('ai.title');
   p.classList.toggle('on', env.ai);
 }
+// Text that lives in index.html (outside the routed view).
+function applyStaticText() {
+  document.documentElement.lang = getLang();
+  document.querySelectorAll('[data-i18n]').forEach((el) => { el.textContent = t(el.dataset.i18n); });
+  const sw = $('langBtn');
+  sw.textContent = t('lang.switch');
+  sw.lang = getLang() === 'hi' ? 'en' : 'hi';
+  sw.title = t('lang.switchTitle');
+  sw.setAttribute('aria-label', t('lang.switchTitle'));
+  setPill();
+}
+function switchLang(l) {
+  if (!LANGS[l]) return;
+  const draft = $('story')?.value; // keep what the owner has typed
+  setLang(l);
+  applyStaticText();
+  if (!$('modal').hidden) closeModal();
+  route({ keepScroll: true });
+  if (draft != null && $('story')) $('story').value = draft;
+  const mic = $('micBtn');
+  if (mic) mic.hidden = !(env.ai && env.canRecord);
+}
+applyStaticText();
 route();
 api.health().then((h) => {
   env.ai = !!h.ai;
+  env.checked = true;
   setPill();
   const mic = $('micBtn');
   if (mic) mic.hidden = !(env.ai && env.canRecord);

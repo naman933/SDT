@@ -4,7 +4,8 @@
   --amber: #9a5b00; --amber-soft: #fff5e3; --red: #b42318; --red-soft: #fdeceb; --grey-soft: #eef1f5;
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 Inter, system-ui, -apple-system, "Segoe UI", Arial, sans-serif; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 Inter, system-ui, -apple-system, "Segoe UI", "Noto Sans Devanagari", "Kohinoor Devanagari", "Nirmala UI", "Mangal", Arial, sans-serif; }
+html[lang="hi"] body { line-height: 1.65; }
 a { color: var(--blue); }
 .wrap { max-width: 1080px; margin: auto; padding: 16px; padding-top: max(16px, env(safe-area-inset-top)); }
 .topbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
@@ -12,6 +13,7 @@ a { color: var(--blue); }
 .brand i { color: var(--blue); font-style: normal; }
 .nav { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .pill { font: inherit; font-size: 12px; padding: 5px 10px; border-radius: 99px; background: var(--grey-soft); color: var(--mute); border: 0; font-weight: 700; cursor: pointer; text-decoration: none; }
+.pill.lang { background: var(--blue-soft); color: var(--blue); }
 .pill.on { background: var(--green-soft); color: var(--green); }
 main { background: var(--card); border: 1px solid var(--line); border-radius: 20px; padding: 30px; min-height: 620px; outline: none; }
 h1 { font-size: 36px; line-height: 1.08; letter-spacing: -1px; margin: 0 0 10px; }

@@ -13,16 +13,14 @@
       <header class="topbar">
         <a class="brand" href="#/">MSME <i>Navigator</i></a>
         <nav class="nav">
-          <span class="pill" id="aiPill" title="How your words are understood">Checking…</span>
-          <button class="pill" data-act="about">About the data</button>
-          <a class="pill" href="#/my-msme">My MSME</a>
+          <button class="pill lang" id="langBtn" data-act="lang" lang="hi">हिंदी</button>
+          <span class="pill" id="aiPill">Checking…</span>
+          <button class="pill" data-act="about" data-i18n="nav.about">About the data</button>
+          <a class="pill" href="#/my-msme" data-i18n="nav.my">My MSME</a>
         </nav>
       </header>
       <main id="view" tabindex="-1"></main>
-      <p class="foot">
-        Prototype · controlled corpus recorded Sep 2026 · records are not live-verified · decision support, not approval.
-        Your answers are saved only in this browser; when AI understanding is on, your description is sent to our server to be read and is not stored.
-      </p>
+      <p class="foot" data-i18n="foot">Prototype · controlled corpus recorded Sep 2026 · records are not live-verified · decision support, not approval.</p>
     </div>
     <div class="modal" id="modal" hidden><div class="mbox" id="modalBody" role="dialog" aria-modal="true"></div></div>
     <script type="module" src="/src/main.js"></script>

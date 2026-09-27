@@ -1,11 +1,11 @@
 // Controlled prototype corpus. NOT every scheme in India.
 // Every record states its source; `basis: 'typical'` marks general practice rather than an official requirement.
 // Records were recorded in Sep 2026 (see RECORDED) and are not live-verified.
-import { L, CR, V, inr, hasNeed } from './core.js';
+import { L, CR, V, hasNeed } from './core.js';
 
-const isDairy = (f) => V(f, 'sector') === 'dairy' || /dairy|milk|cattle|buffalo/i.test(V(f, 'activity') || '');
+const isDairy = (f) => V(f, 'sector') === 'dairy' || /dairy|milk|cattle|buffalo|डेयरी|दूध/i.test(V(f, 'activity') || '');
 export const ARTISAN_RX =
-  /tailor|darzi|stitch|carpent|potter|pottery|blacksmith|lohar|cobbler|mochi|goldsmith|sunar|barber|mason|basket|mat weav|broom|toy|garland|washerman|dhobi|locksmith|sculpt|stone carv|boat|fishing net|armour|hammer/i;
+  /tailor|darzi|stitch|carpent|potter|pottery|blacksmith|lohar|cobbler|mochi|goldsmith|sunar|barber|mason|basket|mat weav|broom|toy|garland|washerman|dhobi|locksmith|sculpt|stone carv|boat|fishing net|armour|hammer|सिलाई|दर्ज़ी|दर्जी|बढ़ई|कुम्हार|लोहार|मोची|सुनार|नाई|धोबी|राजमिस्त्री/i;
 const isArtisan = (f) => ARTISAN_RX.test((V(f, 'activity') || '') + ' ' + (V(f, 'story') || ''));
 
 // Condition: test(f) -> 'met' | 'unknown' | 'not_met' | 'todo' | null (not applicable)
@@ -45,7 +45,8 @@ export const CORPUS = [
       C('Tarun Plus (above ₹10 lakh) is only for borrowers who took and repaid an earlier Tarun loan', 'prior_tarun', (f) => { const a = V(f, 'amount'); return a != null && a > 10 * L && a <= 20 * L ? 'unknown' : null; }),
       C('An income-generating business — manufacturing, trading, services, or allied-agriculture activity like dairy (not crop farming)', 'sector', (f) => { const s = V(f, 'sector'); return !s ? 'unknown' : s === 'agri_crop' ? 'not_met' : 'met'; }),
     ],
-    why: (f) => { const a = V(f, 'amount'); if (a == null) return ''; const c = a <= 5e4 ? 'Shishu' : a <= 5 * L ? 'Kishore' : a <= 10 * L ? 'Tarun' : a <= 20 * L ? 'Tarun Plus' : null; return c ? `${inr(a)} falls in the ${c} category.` : ''; },
+    // Returns the MUDRA category name for the amount (the UI phrases it).
+    category: (f) => { const a = V(f, 'amount'); if (a == null) return null; return a <= 5e4 ? 'Shishu' : a <= 5 * L ? 'Kishore' : a <= 10 * L ? 'Tarun' : a <= 20 * L ? 'Tarun Plus' : null; },
     info: DOCS_LOAN, route: { text: 'Apply at a bank / NBFC / MFI branch, or online via the Udyamimitra portal', url: 'https://www.udyamimitra.in/' },
     src: { t: 'MUDRA', u: 'https://www.mudra.org.in/' }, corpusNote: 'added in v2',
   },

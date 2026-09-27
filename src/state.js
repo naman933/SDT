@@ -32,7 +32,8 @@ export function startNewJourney(story) {
 }
 
 export function logEvent(t) {
-  S.log.unshift({ t, at: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) });
+  const locale = typeof document !== 'undefined' && document.documentElement.lang === 'hi' ? 'hi-IN' : 'en-IN';
+  S.log.unshift({ t, at: new Date().toLocaleString(locale, { dateStyle: 'medium', timeStyle: 'short' }) });
   S.log = S.log.slice(0, 30);
   save();
 }

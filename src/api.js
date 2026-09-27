@@ -10,11 +10,11 @@ export async function health() {
   }
 }
 
-export async function understand(text) {
+export async function understand(text, lang = 'en') {
   const r = await fetch('/api/understand', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, lang }),
     signal: AbortSignal.timeout(20000),
   });
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);

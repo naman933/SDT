@@ -50,7 +50,7 @@ tests/                    jury scenarios + parser/sanitiser tests
 npm install
 cp .env.example .env.local     # add GROQ_API_KEY (optional — rule-based mode without it)
 npm run dev                    # http://localhost:5173 — /api works via the dev server
-npm test                       # 25 scenario + guardrail tests
+npm test                       # scenario, guardrail and translation-coverage tests
 npm run build                  # production build to dist/
 ```
 
@@ -71,6 +71,17 @@ vercel --prod
 ```
 
 After deploying, open `/api/health`. It should return `{"ai":true}`.
+
+## Languages (English / हिंदी)
+
+The **हिंदी / English** button in the header switches the whole interface, including scheme descriptions, conditions, documents and routes. The choice is remembered per browser, and Hindi is chosen by default when the browser's language is Hindi.
+
+- `src/i18n/strings.js` holds the UI text (`en` and `hi`). Hindi-only keys cover needs, questions and labels; their English text comes from the data itself.
+- `src/i18n/corpus.hi.js` holds the Hindi versions of the corpus text, keyed by the exact English string in `corpus.js`. If you edit an English string there, update this file too, or `npm test` will fail.
+- With AI on, the summary comes back in the selected language. Without AI, the rules also understand Devanagari (e.g. "8 लाख", "मशीन", "भुगतान नहीं").
+- The page says that the Hindi text is a translation and that the official source takes precedence.
+
+To add a language, add a block to `strings.js` and a `corpus.<lang>.js` file, register the language in `LANGS` (`src/i18n/index.js`), and extend `tests/i18n.test.js`.
 
 ## Security & privacy
 
@@ -98,4 +109,4 @@ Each record in `src/engine/corpus.js` has `purposes`, `conditions` (each with a 
 - Records were recorded in Sep 2026 and are not live-verified.
 - Nearby support uses a live map search, not a curated list of verified support points.
 - Finance Saathi is a proposed service; the app generates a hand-off note.
-- Not yet built: reading documents, proactive alerts, and a Hindi interface. Spoken and typed input already works in any language.
+- Not yet built: reading documents and proactive alerts. The interface is available in English and Hindi, and spoken or typed input works in any language.

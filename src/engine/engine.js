@@ -53,12 +53,13 @@ export function evaluate(p, f) {
   else if (fit < MIN_FIT) status = 'weak';
   else status = unknownMandatory.length ? 'check' : 'yes';
 
+  const overMax = a != null && !!p.amount && a > p.amount.max;
   let reason = '';
   if (p.status === 'verify') reason = 'Current status of this scheme needs to be confirmed before we can recommend it.';
   else if (blocked) reason = 'Not met: ' + blocked.text;
-  else if (a != null && p.amount && a > p.amount.max) reason = `Covers up to ${inr(p.amount.max)}; you mentioned ${inr(a)}`;
+  else if (overMax) reason = `Covers up to ${inr(p.amount.max)}; you mentioned ${inr(a)}`;
 
-  return { id: p.id, p, purpose, need, fit, parts, act, aparts, conds, status, reason };
+  return { id: p.id, p, purpose, need, fit, parts, act, aparts, conds, status, reason, blocked, overMax };
 }
 
 export function rank(f) {
@@ -126,11 +127,7 @@ export function openSlots(f) {
   return [...slots];
 }
 
-export const fitLabel = (s) => (s >= 80 ? 'Strong match' : s >= 65 ? 'Worth exploring' : s >= 50 ? 'Possible' : 'Unlikely to help');
-export const actLabel = (s) => (s >= 75 ? 'Easy to start' : s >= 55 ? 'Some steps involved' : 'Several steps — human help useful');
-export const STATUS = {
-  yes: ['g', 'Looks relevant — confirm on official source'],
-  check: ['a', 'Possibly relevant — some things to check'],
-  no: ['r', 'Not currently relevant'],
-  weak: ['', 'Weak match'],
-};
+// Bands are keys; the UI turns them into words in the current language.
+export const fitBand = (s) => (s >= 80 ? 'strong' : s >= 65 ? 'worth' : s >= 50 ? 'possible' : 'unlikely');
+export const actBand = (s) => (s >= 75 ? 'easy' : s >= 55 ? 'some' : 'several');
+export const STATUS_TONE = { yes: 'g', check: 'a', no: 'r', weak: '' };

@@ -1,79 +1,77 @@
 // Pure render functions: state in, HTML string out. Interactions use data-act attributes (see main.js).
+// All user-visible text goes through t() / td() / tc() so the page follows the language toggle.
 import { S } from '../state.js';
 import {
   NEEDS, QUESTIONS, MAX_QUESTIONS, CORPUS, INSTITUTIONAL, SUPPORT, RECORDED, byId,
-  V, needsOf, inr, rank, evaluate, enablersFor, openSlots, fitLabel, actLabel, STATUS,
+  V, needsOf, rank, evaluate, enablersFor, openSlots, fitBand, actBand, STATUS_TONE,
 } from '../engine/index.js';
+import { t, td, tc, money, joinList, getLang, STRINGS } from '../i18n/index.js';
 
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const attr = (v) => esc(JSON.stringify(v));
 
-export const LABEL = {
+/* ---------------- Localised data labels ---------------- */
+const LABEL_EN = {
   need: 'What it is for', amount: 'Amount', stage: 'Business stage', activity: 'Business', sector: 'Sector', city: 'City', state: 'State / UT',
   urgency: 'Timing', buyer_type: 'Customer who owes you', overdue: 'Payment overdue', udyam: 'Udyam registration', green_tech: 'Kind of equipment',
   dairy_type: 'Dairy type', size: 'Yearly sales', applicant: 'Entrepreneur', artisan_trade: 'Traditional trade',
 };
-const EXTRA = {
-  sector: { manufacturing: 'Manufacturing', services: 'Services', trading: 'Trading', dairy: 'Dairy (allied agriculture)', agri_crop: 'Crop farming' },
+const SECTOR_EN = { manufacturing: 'Manufacturing', services: 'Services', trading: 'Trading', dairy: 'Dairy (allied agriculture)', agri_crop: 'Crop farming' };
+export const label = (k) => td('label.' + k, LABEL_EN[k]);
+export const hasLabel = (k) => k in LABEL_EN;
+export const needL = (n) => td(`need.${n}.l`, NEEDS[n]?.l || n);
+export const needS = (n) => td(`need.${n}.s`, NEEDS[n]?.s || '');
+export const qText = (slot) => td(`q.${slot}.q`, QUESTIONS[slot].q);
+export const qWhy = (slot) => td(`q.${slot}.why`, QUESTIONS[slot].why);
+export const optL = (slot, v) => {
+  if (slot === 'need') return needL(v);
+  const o = QUESTIONS[slot]?.opts.find((x) => x[0] === v);
+  return td(`q.${slot}.opt.${v}`, o ? o[1] : String(v));
 };
-export function fmt(k, v) {
-  if (v == null || v === 'unknown') return 'Not known yet';
-  if (k === 'need') return v.map((n) => NEEDS[n]?.l || n).join(' · ');
-  if (k === 'amount') return inr(v);
-  const o = QUESTIONS[k]?.opts.find((x) => x[0] === v);
-  if (o) return o[1];
-  return EXTRA[k]?.[v] || v;
-}
-const ORIGIN = { said: ['o-said', 'You said'], ai: ['o-ai', 'Understood'], inferred: ['o-inferred', 'We assumed'], answered: ['o-answered', 'You answered'], unknown: ['o-unknown', 'Not known'] };
-const knownKeys = (f) => Object.keys(f).filter((k) => LABEL[k] && V(f, k) != null);
+const activityL = (a) => td('activity.' + a, a);
 
-export const TILES = [
-  ["I don't know", 'Help me figure it out', "I'm not sure what support or funding is right for my business. Help me figure it out."],
-  ['Buy a machine', 'Equipment / tools / upgrade', 'I need money to buy a machine for my business.'],
-  ["A customer hasn't paid", 'Stuck payment, cash is tight', "A customer hasn't paid me and I need cash."],
-  ['Money to run the business', 'Stock, raw material, wages', 'I need money for stock and day-to-day running of my business.'],
-  ['Start something new', 'New business', 'I want to start a new business.'],
-  ['Get more customers', 'Sell more / online / to government', 'I want to find more customers and sell more.'],
-];
-export const DEMOS = [
-  ['1 · Dairy, ₹8L machine', 'I run a dairy near Pune in Maharashtra. I need about 8 lakh for a new milk chilling machine.'],
-  ['2 · Pune manufacturer, ₹25L expansion', 'We manufacture auto parts in Pune and have more orders than we can handle. We want to expand capacity with new machines worth about 25 lakh.'],
-  ['3 · Mumbai retailer, ₹3L stock', 'I have a kirana shop in Mumbai and need around 3 lakh for stock before the festive season.'],
-  ['4 · New entrepreneur, ₹10L', 'I want to start my own tailoring and boutique business and need about 10 lakh.'],
-  ["5 · Customer hasn't paid", "My customer hasn't paid me and I need cash."],
-  ['6 · No Udyam', "I need money to grow my business but I don't have Udyam registration."],
-  ['7 · No government route', 'We are a wholesale trader in Surat with about 60 crore annual sales. We need 1.5 crore working capital for festive stock, urgently.'],
-  ['Hindi', 'Main Pune mein dairy chalata hoon, 8 lakh ki nayi milk chilling machine leni hai'],
-];
+export function fmt(k, v) {
+  if (v == null || v === 'unknown') return t('notKnown');
+  if (k === 'need') return v.map(needL).join(' · ');
+  if (k === 'amount') return money(v);
+  if (k === 'sector') return td('sector.' + v, SECTOR_EN[v] || v);
+  if (k === 'activity') return activityL(v);
+  if (QUESTIONS[k]?.opts.some((x) => x[0] === v)) return optL(k, v);
+  return v;
+}
+const ORIGIN_CLS = { said: 'o-said', ai: 'o-ai', inferred: 'o-inferred', answered: 'o-answered', unknown: 'o-unknown' };
+const knownKeys = (f) => Object.keys(f).filter((k) => hasLabel(k) && V(f, k) != null);
+const fitL = (s) => t('fit.' + fitBand(s));
+const actL = (s) => t('act.' + actBand(s));
+const nameOf = (p) => tc(p.name);
 
 /* ---------------- Start ---------------- */
 export function startView({ ai, canRecord }) {
-  return `<h1>Tell us what's happening in your business.</h1>
-  <p class="sub">You don't need to know any scheme or loan name. Describe a problem, a plan or a money need in your own words — any language. We'll help you figure out what to explore next.</p>
-  <label class="small" for="story"><b>What's happening in your business?</b></label>
-  <textarea id="story" placeholder="Example: I run a dairy near Pune and need about ₹8 lakh for a milk chilling machine.">${esc(S.story)}</textarea>
-  <div class="row" style="margin-top:8px"><button class="mic" id="micBtn" data-act="mic" ${ai && canRecord ? '' : 'hidden'}>🎙 Speak instead</button><span class="small" id="micNote" aria-live="polite"></span></div>
-  <div class="small" style="margin-top:14px;font-weight:700">Or start from a situation:</div>
-  <div class="tiles">${TILES.map((t, i) => `<button class="tile" data-act="tile" data-i="${i}"><b>${esc(t[0])}</b><span>${esc(t[1])}</span></button>`).join('')}</div>
-  <div class="actions"><button class="primary" id="goBtn" data-act="start">Continue →</button></div>
-  <details><summary class="small">Demo scenarios</summary><div class="demo">${DEMOS.map((d, i) => `<button data-act="demo" data-i="${i}">${esc(d[0])}</button>`).join('')}</div></details>`;
+  return `<h1>${esc(t('start.h1'))}</h1>
+  <p class="sub">${esc(t('start.sub'))}</p>
+  <label class="small" for="story"><b>${esc(t('start.label'))}</b></label>
+  <textarea id="story" placeholder="${esc(t('start.ph'))}">${esc(S.story)}</textarea>
+  <div class="row" style="margin-top:8px"><button class="mic" id="micBtn" data-act="mic" ${ai && canRecord ? '' : 'hidden'}>${esc(t('start.mic'))}</button><span class="small" id="micNote" aria-live="polite"></span></div>
+  <div class="small" style="margin-top:14px;font-weight:700">${esc(t('start.or'))}</div>
+  <div class="tiles">${t('tiles').map((x, i) => `<button class="tile" data-act="tile" data-i="${i}"><b>${esc(x[0])}</b><span>${esc(x[1])}</span></button>`).join('')}</div>
+  <div class="actions"><button class="primary" id="goBtn" data-act="start">${esc(t('start.continue'))}</button></div>
+  <details><summary class="small">${esc(t('start.demos'))}</summary><div class="demo">${t('demos').map((d, i) => `<button data-act="demo" data-i="${i}">${esc(d[0])}</button>`).join('')}</div></details>`;
 }
 
 /* ---------------- Understanding (echo-back) ---------------- */
 export function understandView() {
-  const keys = Object.keys(S.facts).filter((k) => LABEL[k]);
-  const rows = keys.map((k) => {
+  const rows = Object.keys(S.facts).filter(hasLabel).map((k) => {
     const x = S.facts[k];
-    const o = x.v === 'unknown' ? ORIGIN.unknown : ORIGIN[x.o] || ORIGIN.said;
-    return `<div class="fact"><div><div class="k">${LABEL[k]}</div><div class="v">${esc(fmt(k, x.v))}</div></div>
-      <div class="row"><span class="origin ${o[0]}">${o[1]}</span><button class="link" data-act="drop-fact" data-k="${k}">Remove</button></div></div>`;
+    const o = x.v === 'unknown' ? 'unknown' : ORIGIN_CLS[x.o] ? x.o : 'said';
+    return `<div class="fact"><div><div class="k">${esc(label(k))}</div><div class="v">${esc(fmt(k, x.v))}</div></div>
+      <div class="row"><span class="origin ${ORIGIN_CLS[o]}">${esc(t('origin.' + o))}</span><button class="link" data-act="drop-fact" data-k="${k}">${esc(t('check.remove'))}</button></div></div>`;
   }).join('');
-  return `<h2>Here's what we understood</h2>
-  <p class="sub">Please check this. Anything wrong? Remove it and we'll ask instead. Nothing else is required to start.</p>
-  ${S.summary ? `<div class="note"><b>In short:</b> ${esc(S.summary)}</div>` : ''}
-  <div class="facts">${rows || `<div class="note">That's okay — let's start with what is happening in your business. We'll ask one short question at a time.</div>`}</div>
-  <p class="small"><span class="origin o-said">You said</span> taken from your words · <span class="origin o-ai">Understood</span> read by AI from your words · <span class="origin o-inferred">We assumed</span> implied, not stated — please check</p>
-  <div class="actions"><a class="btn secondary" href="#/">← Edit my words</a><button class="primary" data-act="confirm">Looks right →</button></div>`;
+  return `<h2>${esc(t('check.h2'))}</h2>
+  <p class="sub">${esc(t('check.sub'))}</p>
+  ${S.summary ? `<div class="note"><b>${esc(t('check.summary'))}</b> ${esc(S.summary)}</div>` : ''}
+  <div class="facts">${rows || `<div class="note">${esc(t('check.empty'))}</div>`}</div>
+  <p class="small"><span class="origin o-said">${esc(t('origin.said'))}</span> ${esc(t('check.legend.said'))} · <span class="origin o-ai">${esc(t('origin.ai'))}</span> ${esc(t('check.legend.ai'))} · <span class="origin o-inferred">${esc(t('origin.inferred'))}</span> ${esc(t('check.legend.inferred'))}</p>
+  <div class="actions"><a class="btn secondary" href="#/">${esc(t('check.back'))}</a><button class="primary" data-act="confirm">${esc(t('check.ok'))}</button></div>`;
 }
 
 /* ---------------- Adaptive question ---------------- */
@@ -83,232 +81,239 @@ export function questionView() {
   const n = S.asked.filter((s) => s !== 'need').length;
   const R = rank(S.facts);
   const side = S.needHelp
-    ? `<b>That's okay.</b><p class="small">Pick the situation that feels closest — or talk to a Finance Saathi, who can work it out with you.</p><button class="ghost" data-act="saathi">Talk to a Finance Saathi</button>`
-    : `<b>Why this question?</b><p style="margin:6px 0">It is the one answer most likely to change what we show you${S.curAffects.length ? ':' : '.'}</p>
-      ${S.curAffects.length ? '<ul>' + S.curAffects.slice(0, 4).map((id) => '<li>' + esc(byId(id)?.name) + '</li>').join('') + '</ul>' : ''}
-      <hr><b>Routes being considered now: ${R.top.length}</b><div class="small" style="margin-top:4px">${R.top.slice(0, 5).map((x) => esc(x.p.name)).join(' · ') || '— waiting for your first answer'}</div>
-      <hr><div class="small">We stop asking as soon as more answers would not change the result — at most ${MAX_QUESTIONS} questions.</div>`;
+    ? `<b>${esc(t('q.helpTitle'))}</b><p class="small">${esc(t('q.helpText'))}</p><button class="ghost" data-act="saathi">${esc(t('res.talkLower'))}</button>`
+    : `<b>${esc(t('q.whyTitle'))}</b><p style="margin:6px 0">${esc(t('q.whyText'))}${S.curAffects.length ? ':' : getLang() === 'hi' ? '।' : '.'}</p>
+      ${S.curAffects.length ? '<ul>' + S.curAffects.slice(0, 4).map((id) => '<li>' + esc(nameOf(byId(id))) + '</li>').join('') + '</ul>' : ''}
+      <hr><b>${esc(t('q.considering', { n: R.top.length }))}</b><div class="small" style="margin-top:4px">${R.top.slice(0, 5).map((x) => esc(nameOf(x.p))).join(' · ') || esc(t('q.waiting'))}</div>
+      <hr><div class="small">${esc(t('q.stop', { max: MAX_QUESTIONS }))}</div>`;
+  const desc = (o) => (slot === 'need' ? needS(o[0]) : '');
   return `<div class="qwrap"><div>
-    <div class="qprog">${slot === 'need' ? 'First question' : `Question ${n + 1} · up to ${MAX_QUESTIONS}`}</div>
-    <h2>${esc(q.q)}</h2><p class="sub">${esc(q.why)}</p>
-    <div class="opts">${q.opts.map((o, i) => `<button class="opt" data-act="opt" data-i="${i}">${esc(o[1])}${o[2] ? `<div class="small">${esc(o[2])}</div>` : ''}</button>`).join('')}</div>
-    ${q.amount ? `<form class="row" data-form="amount"><input id="amtIn" class="grow" placeholder="Or type an amount, e.g. 8 lakh" aria-label="Amount"><button class="ghost" type="submit">Use this</button></form><p class="small err" id="amtErr" aria-live="polite"></p>` : ''}
-    <div class="row" style="margin-top:10px"><button class="secondary" data-act="dk">I don't know</button><button class="secondary" data-act="dk" data-skip="1">Skip</button><span class="grow"></span><button class="link" data-act="show-results">Show me what you have now →</button></div>
+    <div class="qprog">${esc(slot === 'need' ? t('q.first') : t('q.n', { n: n + 1, max: MAX_QUESTIONS }))}</div>
+    <h2>${esc(qText(slot))}</h2><p class="sub">${esc(qWhy(slot))}</p>
+    <div class="opts">${q.opts.map((o, i) => `<button class="opt" data-act="opt" data-i="${i}">${esc(optL(slot, o[0]))}${desc(o) ? `<div class="small">${esc(desc(o))}</div>` : ''}</button>`).join('')}</div>
+    ${q.amount ? `<form class="row" data-form="amount"><input id="amtIn" class="grow" placeholder="${esc(t('q.amountPh'))}" aria-label="${esc(label('amount'))}"><button class="ghost" type="submit">${esc(t('q.use'))}</button></form><p class="small err" id="amtErr" aria-live="polite"></p>` : ''}
+    <div class="row" style="margin-top:10px"><button class="secondary" data-act="dk">${esc(t('q.dk'))}</button><button class="secondary" data-act="dk" data-skip="1">${esc(t('q.skip'))}</button><span class="grow"></span><button class="link" data-act="show-results">${esc(t('q.showNow'))}</button></div>
   </div><aside class="side">${side}</aside></div>`;
 }
 
 /* ---------------- Results ---------------- */
 function whyText(r) {
   const f = S.facts, bits = [];
-  if (r.need) { const l = NEEDS[r.need].l; bits.push(`you want to ${l[0].toLowerCase() + l.slice(1)}`); }
+  if (r.need) { const l = needL(r.need); bits.push(t('why.need', { need: getLang() === 'hi' ? l : l[0].toLowerCase() + l.slice(1) })); }
   const a = V(f, 'amount');
-  if (a != null && r.p.amount && a >= r.p.amount.min && a <= r.p.amount.max) bits.push(`${inr(a)} is within what it covers`);
+  if (a != null && r.p.amount && a >= r.p.amount.min && a <= r.p.amount.max) bits.push(t('why.amount', { a: money(a) }));
   const st = V(f, 'stage');
-  if (st) bits.push(st === 'new' ? 'you are starting a new business' : 'your business is already running');
+  if (st) bits.push(t(st === 'new' ? 'why.new' : 'why.existing'));
   const act = V(f, 'activity');
-  if (act && (r.p.relevantIf || r.id === 'mudra')) bits.push(`it fits your business (${act})`);
-  let s = 'This surfaced because ' + (bits.length ? bits.join(', ').replace(/, ([^,]*)$/, ' and $1') : 'it matches the kind of need you described') + '.';
-  const extra = r.p.why?.(f);
-  if (extra) s += ' ' + extra;
+  if (act && (r.p.relevantIf || r.id === 'mudra')) bits.push(t('why.fits', { a: activityL(act) }));
+  let s = t('why.because', { x: bits.length ? joinList(bits) : t('why.default') });
+  const cat = r.p.category?.(f);
+  if (cat) s += ' ' + t('why.cat', { a: money(a), c: td('mudra.' + cat, cat) });
   return s;
 }
+export function reasonText(r) {
+  if (r.p.status === 'verify') return t('reason.verify');
+  if (r.blocked) return t('reason.notMet', { x: tc(r.blocked.text) });
+  if (r.overMax) return t('reason.over', { max: money(r.p.amount.max), a: money(V(S.facts, 'amount')) });
+  return t(r.status === 'weak' ? 'hidden.weak' : 'hidden.lower');
+}
 function condLi(cs) {
-  return cs.map((c) => `<li>${esc(c.text)}${c.basis === 'typical' ? ' <span class="chip">typical</span>' : ''}${c.kind === 'conditional' ? ' <span class="chip">if applicable</span>' : ''}</li>`).join('');
+  return cs.map((c) => `<li>${esc(tc(c.text))}${c.basis === 'typical' ? ` <span class="chip">${esc(t('chip.typical'))}</span>` : ''}${c.kind === 'conditional' ? ` <span class="chip">${esc(t('chip.ifApplicable'))}</span>` : ''}</li>`).join('');
 }
 function knownFacts(r) {
   const f = S.facts, out = [];
-  if (r.need) out.push('Need: ' + NEEDS[r.need].l);
-  const a = V(f, 'amount'); if (a != null) out.push('Amount: about ' + inr(a));
-  const st = V(f, 'stage'); if (st) out.push('Stage: ' + fmt('stage', st));
-  const act = V(f, 'activity'); if (act) out.push('Business: ' + act);
+  if (r.need) out.push(t('known.need', { x: needL(r.need) }));
+  const a = V(f, 'amount'); if (a != null) out.push(t('known.amount', { x: money(a) }));
+  const st = V(f, 'stage'); if (st) out.push(t('known.stage', { x: fmt('stage', st) }));
+  const act = V(f, 'activity'); if (act) out.push(t('known.biz', { x: activityL(act) }));
   return out;
 }
 function bars(parts) {
-  return Object.entries(parts).map(([k, [v, w]]) => `<div class="small split"><span>${esc(k)}</span><span>${Math.round(v * w)} / ${w}</span></div><div class="bar"><i style="width:${Math.round(v * 100)}%"></i></div>`).join('');
+  return Object.entries(parts).map(([k, [v, w]]) => `<div class="small split"><span>${esc(t('part.' + k))}</span><span>${Math.round(v * w)} / ${w}</span></div><div class="bar"><i style="width:${Math.round(v * 100)}%"></i></div>`).join('');
 }
 function scorePanel(r) {
   const m = r.conds.filter((c) => c.kind === 'mandatory');
   const n = (st) => m.filter((c) => c.state === st).length;
   return `<div class="sgrid">
-    <div><b>Need fit ${r.fit}/100</b> <span class="small">(ranks the list)</span>${bars(r.parts)}</div>
-    <div><b>Conditions</b> <span class="small">(shown, not added)</span><p class="small">${n('met')} of ${m.length} required conditions confirmed · ${n('unknown')} unknown · ${n('not_met')} not met.<br>Unknown never counts as "no".</p></div>
-    <div><b>Actionability ${r.act}/100</b> <span class="small">(tie-break)</span>${bars(r.aparts)}</div>
-  </div><p class="small">Heuristic prototype weights — not validated, not an approval probability.</p>`;
+    <div><b>${esc(t('score.fit', { n: r.fit }))}</b> <span class="small">${esc(t('score.ranks'))}</span>${bars(r.parts)}</div>
+    <div><b>${esc(t('score.conds'))}</b> <span class="small">${esc(t('score.shown'))}</span><p class="small">${esc(t('score.condText', { m: n('met'), t: m.length, u: n('unknown'), n: n('not_met') }))}<br>${esc(t('score.unknownNo'))}</p></div>
+    <div><b>${esc(t('score.act', { n: r.act }))}</b> <span class="small">${esc(t('score.tie'))}</span>${bars(r.aparts)}</div>
+  </div><p class="small">${esc(t('score.note'))}</p>`;
 }
 function card(r) {
-  const p = r.p, f = S.facts, st = STATUS[r.status];
+  const p = r.p, f = S.facts;
   const g = (s) => r.conds.filter((c) => c.state === s);
   const en = enablersFor(r, f);
   const known = knownFacts(r).map((x) => `<li>${esc(x)}</li>`).join('') + condLi(g('met'));
   const toCheck = g('unknown').length || g('todo').length
     ? `<ul class="list unk">${condLi(g('unknown'))}</ul><ul class="list todo">${condLi(g('todo'))}</ul>`
-    : '<p class="small">Nothing we know of — still confirm on the official source.</p>';
+    : `<p class="small">${esc(t('card.nothing'))}</p>`;
   const host = (u) => u.replace(/^https?:\/\//, '').replace(/\/$/, '');
   return `<article class="card" id="c-${r.id}">
-    <div class="top"><div><div class="name">${esc(p.name)}</div>
-      <div><span class="chip ${p.family === 'gov' ? 'b' : ''}">${p.family === 'gov' ? 'Government' : 'Formal finance'}</span>${p.parent ? `<span class="chip">part of ${esc(p.parent)}</span>` : ''}<span class="chip ${st[0]}">${st[1]}</span></div></div>
-      <div class="fitbox"><div class="fitlabel">${fitLabel(r.fit)}</div><div class="small">${actLabel(r.act)}</div></div></div>
-    <p style="margin:10px 0 0">${esc(p.plain)}</p>
+    <div class="top"><div><div class="name">${esc(nameOf(p))}</div>
+      <div><span class="chip ${p.family === 'gov' ? 'b' : ''}">${esc(t(p.family === 'gov' ? 'chip.gov' : 'chip.fin'))}</span>${p.parent ? `<span class="chip">${esc(t('card.partOf', { p: p.parent }))}</span>` : ''}<span class="chip ${STATUS_TONE[r.status]}">${esc(t('status.' + r.status))}</span></div></div>
+      <div class="fitbox"><div class="fitlabel">${esc(fitL(r.fit))}</div><div class="small">${esc(actL(r.act))}</div></div></div>
+    <p style="margin:10px 0 0">${esc(tc(p.plain))}</p>
     <div class="why">${esc(whyText(r))}</div>
-    <div class="cols"><div><b class="small">What we know</b><ul class="list met">${known || '<li>Only your description so far</li>'}</ul></div>
-      <div><b class="small">What still needs checking</b>${toCheck}</div></div>
-    ${en.map(({ e, conds }) => { const u = conds.filter((c) => c.state === 'unknown'); return `<div class="enabler"><b>Also ask about: ${esc(e.name)}</b> — ${esc(e.plain)}${u.length ? `<div class="small">To check: ${u.map((c) => esc(c.text)).join('; ')}</div>` : ''}</div>`; }).join('')}
-    <div class="small" style="margin-top:10px"><b>Official route:</b> ${esc(p.route.text)}${p.route.url ? ` — <a href="${p.route.url}" target="_blank" rel="noopener">${esc(host(p.route.url))} ↗</a>` : ''}<br>
-      <b>Source:</b> ${p.src ? `<a href="${p.src.u}" target="_blank" rel="noopener">${esc(p.src.t)}</a> · recorded ${RECORDED} · <span style="color:var(--amber)">not live-verified</span>` : 'General route category — no single official source; terms vary by lender'}${p.corpusNote ? ` · <span class="chip">${esc(p.corpusNote)}</span>` : ''}</div>
-    <div class="actions left" style="margin-top:12px"><button class="primary" data-act="explore" data-id="${r.id}">Explore this →</button><button class="ghost" data-act="toggle-score" data-id="${r.id}" aria-expanded="false">How was this scored?</button></div>
+    <div class="cols"><div><b class="small">${esc(t('card.know'))}</b><ul class="list met">${known || `<li>${esc(t('card.only'))}</li>`}</ul></div>
+      <div><b class="small">${esc(t('card.check'))}</b>${toCheck}</div></div>
+    ${en.map(({ e, conds }) => { const u = conds.filter((c) => c.state === 'unknown'); return `<div class="enabler"><b>${esc(t('card.alsoAsk', { n: nameOf(e) }))}</b> — ${esc(tc(e.plain))}${u.length ? `<div class="small">${esc(t('card.toCheck', { x: u.map((c) => tc(c.text)).join('; ') }))}</div>` : ''}</div>`; }).join('')}
+    <div class="small" style="margin-top:10px"><b>${esc(t('card.route'))}</b> ${esc(tc(p.route.text))}${p.route.url ? ` — <a href="${p.route.url}" target="_blank" rel="noopener">${esc(host(p.route.url))} ↗</a>` : ''}<br>
+      <b>${esc(t('card.source'))}</b> ${p.src ? `<a href="${p.src.u}" target="_blank" rel="noopener">${esc(tc(p.src.t))}</a> · ${esc(t('card.recorded', { d: RECORDED }))} · <span style="color:var(--amber)">${esc(t('card.notVerified'))}</span>` : esc(t('card.generic'))}${p.corpusNote ? ` · <span class="chip">${esc(tc(p.corpusNote))}</span>` : ''}</div>
+    <div class="actions left" style="margin-top:12px"><button class="primary" data-act="explore" data-id="${r.id}">${esc(t('card.explore'))}</button><button class="ghost" data-act="toggle-score" data-id="${r.id}" aria-expanded="false">${esc(t('card.how'))}</button></div>
     <div class="score" id="sc-${r.id}" hidden>${scorePanel(r)}</div>
   </article>`;
 }
 function helpReasons(R) {
   const w = [];
-  if (S.dk >= 2) w.push("You weren't sure about a few things — that's normal.");
-  const t = R.top[0];
-  if (t && t.conds.filter((c) => c.state === 'unknown' && c.kind === 'mandatory').length >= 3) w.push('The leading route has several conditions to check.');
-  if (t && t.act < 55) w.push('The leading route has several steps.');
-  if (!R.top.length) w.push('We could not find a route in our coverage.');
+  if (S.dk >= 2) w.push(t('help.dk'));
+  const top = R.top[0];
+  if (top && top.conds.filter((c) => c.state === 'unknown' && c.kind === 'mandatory').length >= 3) w.push(t('help.conds'));
+  if (top && top.act < 55) w.push(t('help.steps'));
+  if (!R.top.length) w.push(t('help.none'));
   return w;
 }
 export function resultsView() {
   const f = S.facts, R = rank(f);
   const basis = ['need', 'amount', 'stage', 'activity', 'city'].map((k) => (V(f, k) != null ? fmt(k, V(f, k)) : null)).filter(Boolean);
-  let h = `<h2>What may be relevant to you</h2><p class="sub">Based on: ${esc(basis.join(' · ') || 'your description')}. Add or change details any time — the result updates.</p>`;
+  let h = `<h2>${esc(t('res.h2'))}</h2><p class="sub">${esc(t('res.basis', { b: basis.join(' · ') || t('res.yourDesc') }))}</p>`;
+  if (t('translationNote')) h += `<p class="small">${esc(t('translationNote'))}</p>`;
   if (!needsOf(f).length) {
-    h += `<div class="banner"><b>We need one more piece of information.</b>We couldn't tell what the money or help is for. <button class="link" data-act="confirm">Answer one question →</button> or <button class="link" data-act="saathi">talk to a Finance Saathi</button>.</div>`;
+    h += `<div class="banner"><b>${esc(t('res.needMore.t'))}</b>${esc(t('res.needMore.b'))} <button class="link" data-act="confirm">${esc(t('res.answerOne'))}</button> ${esc(t('res.or'))} <button class="link" data-act="saathi">${esc(t('res.talkLower'))}</button>.</div>`;
   } else if (!R.top.length) {
-    h += `<div class="banner"><b>We couldn't find a route in our current coverage for this situation.</b>That doesn't mean there isn't one — our corpus is limited. A person can help you look further.<div class="actions left"><button class="primary" data-act="saathi">Talk to a Finance Saathi</button></div></div>`;
+    h += `<div class="banner"><b>${esc(t('res.none.t'))}</b>${esc(t('res.none.b'))}<div class="actions left"><button class="primary" data-act="saathi">${esc(t('res.talkLower'))}</button></div></div>`;
   } else if (R.noGov && R.wantsMoney) {
     const cg = R.fin.some((r) => enablersFor(r, f).length);
-    h += `<div class="banner"><b>No directly relevant government scheme found — from the programmes we currently cover.</b>That's common, and your need may still be met through formal finance below.${cg ? ' A government-backed credit guarantee (CGTMSE) may still support a bank or NBFC loan — ask the lender.' : ''}<div class="small" style="margin-top:6px">Our corpus covers ${CORPUS.filter((p) => p.family === 'gov').length} central programmes; state and district schemes are not yet included.</div></div>`;
+    h += `<div class="banner"><b>${esc(t('res.noGov.t'))}</b>${esc(t('res.noGov.b'))}${cg ? esc(t('res.noGov.cg')) : ''}<div class="small" style="margin-top:6px">${esc(t('res.noGov.cov', { n: CORPUS.filter((p) => p.family === 'gov').length }))}</div></div>`;
   }
   if (V(f, 'udyam') === 'no') {
     const needU = R.top.filter((r) => r.conds.some((c) => c.slot === 'udyam'));
-    h += `<div class="note"><b>No Udyam? That's fine — it doesn't stop you exploring.</b> ${needU.length ? `It may matter for: ${needU.map((r) => esc(r.p.name)).join(', ')}. It's free and online, and you can do it once you choose a route.` : 'None of the routes below need it right now.'} <a href="https://udyamregistration.gov.in/" target="_blank" rel="noopener">udyamregistration.gov.in ↗</a></div>`;
+    h += `<div class="note"><b>${esc(t('res.udyam.t'))}</b> ${esc(needU.length ? t('res.udyam.some', { list: needU.map((r) => nameOf(r.p)).join(', ') }) : t('res.udyam.none'))} <a href="https://udyamregistration.gov.in/" target="_blank" rel="noopener">udyamregistration.gov.in ↗</a></div>`;
   }
-  if (R.gov.length) h += `<section class="group"><h3>Government support <span class="chip b">${R.gov.length}</span></h3><div class="cards">${R.gov.map(card).join('')}</div></section>`;
-  if (R.fin.length) h += `<section class="group"><h3>Formal finance <span class="chip">${R.fin.length}</span></h3><p class="small">Route categories, not specific lenders. We don't rank by interest rate or approval chances because we don't have comparable, verified data.</p><div class="cards">${R.fin.map(card).join('')}</div></section>`;
+  if (R.gov.length) h += `<section class="group"><h3>${esc(t('res.gov'))} <span class="chip b">${R.gov.length}</span></h3><div class="cards">${R.gov.map(card).join('')}</div></section>`;
+  if (R.fin.length) h += `<section class="group"><h3>${esc(t('res.fin'))} <span class="chip">${R.fin.length}</span></h3><p class="small">${esc(t('res.finNote'))}</p><div class="cards">${R.fin.map(card).join('')}</div></section>`;
   if (R.top.length) {
-    const check = (r) => r.conds.filter((c) => (c.state === 'unknown' || c.state === 'todo') && c.slot !== 'lender').map((c) => c.text.split(' — ')[0]).slice(0, 2).join('; ') || (r.conds.some((c) => c.slot === 'lender') ? "Lender's assessment and terms" : 'Confirm terms');
-    h += `<section class="group"><h3>Side by side</h3><div class="tablewrap"><table><thead><tr><th>Route</th><th>Why relevant</th><th>What to check</th><th>How long / how hard</th><th>Next step</th></tr></thead><tbody>
-      ${R.top.map((r) => `<tr><td><b>${esc(r.p.name)}</b><br><span class="small">${fitLabel(r.fit)}</span></td><td>${esc(NEEDS[r.need]?.l || '')}</td><td>${esc(check(r))}</td><td>${{ fast: 'Usually quicker', medium: 'Weeks', slow: 'Can take months' }[r.p.speed]} · ${r.p.steps} steps</td><td>${esc(r.p.route.text)}</td></tr>`).join('')}
+    const check = (r) => r.conds.filter((c) => (c.state === 'unknown' || c.state === 'todo') && c.slot !== 'lender').map((c) => tc(c.text).split(' — ')[0]).slice(0, 2).join('; ') || t(r.conds.some((c) => c.slot === 'lender') ? 'check.lender' : 'check.confirmTerms');
+    h += `<section class="group"><h3>${esc(t('res.side'))}</h3><div class="tablewrap"><table><thead><tr><th>${esc(t('th.route'))}</th><th>${esc(t('th.why'))}</th><th>${esc(t('th.check'))}</th><th>${esc(t('th.how'))}</th><th>${esc(t('th.next'))}</th></tr></thead><tbody>
+      ${R.top.map((r) => `<tr><td><b>${esc(nameOf(r.p))}</b><br><span class="small">${esc(fitL(r.fit))}</span></td><td>${esc(r.need ? needL(r.need) : '')}</td><td>${esc(check(r))}</td><td>${esc(t('speed.' + r.p.speed))} · ${esc(t('steps', { n: r.p.steps }))}</td><td>${esc(tc(r.p.route.text))}</td></tr>`).join('')}
       </tbody></table></div>
-      <p class="small">No route is "best" for everyone. It depends on urgency, total cost, collateral, amount, repayment ability and paperwork. If you are also considering borrowing from people you know, compare the total cost and terms the same way.</p></section>`;
+      <p class="small">${esc(t('res.noBest'))}</p></section>`;
   }
   const help = helpReasons(R);
-  if (help.length) h += `<div class="banner help"><b>Want a person to go through this with you?</b>${esc(help.join(' '))}<div class="actions left"><button class="ghost" data-act="saathi">Talk to a Finance Saathi</button></div></div>`;
-  if (R.hidden.length) h += `<details><summary>Also considered, not shown (${R.hidden.length}) — and why</summary><ul class="list no">${R.hidden.map((r) => `<li><b>${esc(r.p.name)}</b> — ${esc(r.reason || (r.status === 'weak' ? 'Weak match for what you described' : 'Lower match than the routes shown'))}</li>`).join('')}</ul></details>`;
-  h += `<div class="warn"><b>This is decision support, not approval.</b> "Strong match" means the route fits what you told us — not that you are eligible or will be approved. Always confirm on the official source.</div>
-    <div class="actions"><a class="btn secondary" href="#/check">← Change my answers</a><a class="btn primary" href="#/my-msme">Open My MSME →</a></div>`;
+  if (help.length) h += `<div class="banner help"><b>${esc(t('help.t'))}</b>${esc(help.join(' '))}<div class="actions left"><button class="ghost" data-act="saathi">${esc(t('res.talkLower'))}</button></div></div>`;
+  if (R.hidden.length) h += `<details><summary>${esc(t('hidden.sum', { n: R.hidden.length }))}</summary><ul class="list no">${R.hidden.map((r) => `<li><b>${esc(nameOf(r.p))}</b> — ${esc(reasonText(r))}</li>`).join('')}</ul></details>`;
+  h += `<div class="warn"><b>${esc(t('res.warn.t'))}</b> ${esc(t('res.warn.b'))}</div>
+    <div class="actions"><a class="btn secondary" href="#/check">${esc(t('res.back'))}</a><a class="btn primary" href="#/my-msme">${esc(t('res.openMy'))}</a></div>`;
   return h;
 }
 
 /* ---------------- Action plan ---------------- */
-export const STAGES = ['Discovered', 'Verifying', 'Preparing', 'Applied', 'Outcome'];
-const LENDER_ASKS = ['What is the total cost — interest plus all fees?', 'Is collateral or a guarantor needed? Can the loan be covered under CGTMSE?', 'Exactly which documents do you need from me?', 'How long will the decision take?', 'What is the repayment schedule, and what if I pay early or late?', 'If you decline, what is the reason and what can I change?'];
-const OFFICE_ASKS = ['Does my situation meet the current eligibility conditions?', 'Which documents are required — is there an official checklist?', 'Is the scheme open now? Any deadline?', 'Who follows up on my application, and how do I track it?'];
-
 export function checklistItems(id) {
   const p = byId(id);
   const r = evaluate(p, S.facts);
   const conds = r ? r.conds : [];
+  // Keys stay in English so ticks survive a language switch.
   return [
-    ...conds.filter((c) => c.state === 'unknown' || c.state === 'todo').map((c) => ['v:' + c.text, 'Confirm: ' + c.text, c.basis]),
-    ...(p.info || []).map(([d, b]) => ['d:' + d, d, b]),
+    ...conds.filter((c) => c.state === 'unknown' || c.state === 'todo').map((c) => ['v:' + c.text, t('act.confirm', { x: tc(c.text) }), c.basis]),
+    ...(p.info || []).map(([d, b]) => ['d:' + d, tc(d), b]),
   ];
 }
 function stepper(id) {
-  const t = S.tracked[id];
-  return `<div class="steps">${STAGES.map((s, i) => `<button class="step ${i < t.stage ? 'done' : i === t.stage ? 'cur' : ''}" data-act="stage" data-id="${id}" data-i="${i}">${s}</button>${i < STAGES.length - 1 ? '<span class="arrow">→</span>' : ''}`).join('')}</div>`;
+  const st = S.tracked[id], names = t('stages');
+  return `<div class="steps">${names.map((s, i) => `<button class="step ${i < st.stage ? 'done' : i === st.stage ? 'cur' : ''}" data-act="stage" data-id="${id}" data-i="${i}">${esc(s)}</button>${i < names.length - 1 ? '<span class="arrow">→</span>' : ''}`).join('')}</div>`;
 }
 export function actionView(id) {
-  const p = byId(id), t = S.tracked[id];
+  const p = byId(id), st = S.tracked[id];
   const items = checklistItems(id);
   const inPerson = p.access !== 'online';
-  return `<h2>Next steps: ${esc(p.name)}</h2><p class="sub">Understand → Verify → Prepare → Apply → Track. Only information this route actually needs is listed.</p>${stepper(id)}
-  <div class="dash"><div class="box"><h3>1 · Verify and prepare</h3>
-    ${items.map(([k, l, b]) => `<label class="check"><input type="checkbox" data-act="tick" data-id="${id}" data-k="${esc(k)}" ${t.done[k] ? 'checked' : ''}><span>${esc(l)} ${b === 'typical' ? '<span class="chip">typical — confirm</span>' : ''}</span></label>`).join('') || '<p class="small">Nothing specific recorded — confirm on the official source.</p>'}
-    <h3 style="margin-top:16px">2 · Official route</h3><p>${esc(p.route.text)}${p.route.url ? `<br><a href="${p.route.url}" target="_blank" rel="noopener">${esc(p.route.url)} ↗</a>` : ''}</p>
-    <h3 style="margin-top:16px">3 · Questions to ask ${p.asks === 'loan' ? 'the lender' : 'the office'}</h3><ul class="small">${(p.asks === 'loan' ? LENDER_ASKS : OFFICE_ASKS).map((q) => '<li>' + esc(q) + '</li>').join('')}</ul></div>
+  return `<h2>${esc(t('act.h2', { n: nameOf(p) }))}</h2><p class="sub">${esc(t('act.sub'))}</p>${stepper(id)}
+  <div class="dash"><div class="box"><h3>${esc(t('act.verify'))}</h3>
+    ${items.map(([k, l, b]) => `<label class="check"><input type="checkbox" data-act="tick" data-id="${id}" data-k="${esc(k)}" ${st.done[k] ? 'checked' : ''}><span>${esc(l)} ${b === 'typical' ? `<span class="chip">${esc(t('act.typicalConfirm'))}</span>` : ''}</span></label>`).join('') || `<p class="small">${esc(t('act.nothing'))}</p>`}
+    <h3 style="margin-top:16px">${esc(t('act.route'))}</h3><p>${esc(tc(p.route.text))}${p.route.url ? `<br><a href="${p.route.url}" target="_blank" rel="noopener">${esc(p.route.url)} ↗</a>` : ''}</p>
+    <h3 style="margin-top:16px">${esc(t(p.asks === 'loan' ? 'act.askLender' : 'act.askOffice'))}</h3><ul class="small">${t(p.asks === 'loan' ? 'lenderAsks' : 'officeAsks').map((q) => '<li>' + esc(q) + '</li>').join('')}</ul></div>
   <div class="box">${inPerson
-    ? `<h3>Find in-person help nearby</h3><p class="small">This route involves a branch or office, so a location helps. We only ask now.</p><form class="row" data-form="pin" data-id="${id}"><input id="pin" class="grow" maxlength="6" inputmode="numeric" placeholder="6-digit pincode" aria-label="Pincode"><button class="ghost" type="submit">Search</button></form><div id="near" aria-live="polite"></div>`
-    : `<h3>This route is online</h3><p class="small">No branch visit needed to start, so we don't ask for your location.</p>`}
-    <hr><h3>Want help?</h3><p class="small">A Finance Saathi can go through this with you. They explain — you decide.</p><button class="ghost" data-act="saathi">Prepare a note for a Saathi / bank</button></div></div>
-  <div class="actions"><a class="btn secondary" href="#/results">← Back to options</a><a class="btn primary" href="#/my-msme">Save to My MSME →</a></div>`;
+    ? `<h3>${esc(t('act.nearT'))}</h3><p class="small">${esc(t('act.nearS'))}</p><form class="row" data-form="pin" data-id="${id}"><input id="pin" class="grow" maxlength="6" inputmode="numeric" placeholder="${esc(t('act.pinPh'))}" aria-label="${esc(t('act.pinPh'))}"><button class="ghost" type="submit">${esc(t('act.search'))}</button></form><div id="near" aria-live="polite"></div>`
+    : `<h3>${esc(t('act.onlineT'))}</h3><p class="small">${esc(t('act.onlineS'))}</p>`}
+    <hr><h3>${esc(t('act.helpT'))}</h3><p class="small">${esc(t('act.helpS'))}</p><button class="ghost" data-act="saathi">${esc(t('act.note'))}</button></div></div>
+  <div class="actions"><a class="btn secondary" href="#/results">${esc(t('act.back'))}</a><a class="btn primary" href="#/my-msme">${esc(t('act.save'))}</a></div>`;
 }
 export function nearbyHtml(id, pin) {
   const p = byId(id);
-  const q = [p.access === 'lender' || p.asks === 'loan' ? 'bank branch' : null, 'District Industries Centre', 'MSME Development and Facilitation Office', p.access === 'mixed' ? 'Common Service Centre' : null].filter(Boolean);
-  return `<ul class="small">${q.map((x) => `<li><a target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(x + ' near ' + pin)}">${esc(x)} near ${pin} ↗</a></li>`).join('')}</ul><p class="small">Opens a live map search. A production version would use a verified, curated list of official support points.</p>`;
+  const kinds = [p.access === 'lender' || p.asks === 'loan' ? 'bank' : null, 'dic', 'dfo', p.access === 'mixed' ? 'csc' : null].filter(Boolean);
+  // Map queries stay in English (better results); labels follow the UI language.
+  return `<ul class="small">${kinds.map((k) => `<li><a target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(STRINGS.en['near.' + k] + ' near ' + pin)}">${esc(t('near.fmt', { x: t('near.' + k), pin }))} ↗</a></li>`).join('')}</ul><p class="small">${esc(t('near.note'))}</p>`;
 }
 
 /* ---------------- Dashboard ---------------- */
 export function dashView(changed = '') {
-  if (!S.story) return `<h2>My MSME</h2><p class="sub">Nothing here yet. Start by telling us what's happening in your business.</p><a class="btn primary" href="#/">Start →</a>`;
+  if (!S.story) return `<h2>${esc(t('dash.h2'))}</h2><p class="sub">${esc(t('dash.empty'))}</p><a class="btn primary" href="#/">${esc(t('dash.start'))}</a>`;
   const f = S.facts, R = rank(f), ids = Object.keys(S.tracked);
   const slots = openSlots(f).slice(0, 4);
   const maxStage = Math.max(1, ...ids.map((id) => S.tracked[id].stage));
   const tracked = ids.length
     ? ids.map((id) => {
-        const p = byId(id), items = checklistItems(id), t = S.tracked[id];
-        const done = items.filter(([k]) => t.done[k]).length;
-        return `<div style="border-top:1px solid var(--line);padding:10px 0"><div class="row" style="justify-content:space-between"><b>${esc(p.name)}</b><span class="small">Ready: ${done} of ${items.length}</span></div>${stepper(id)}
-          <a class="link" href="#/explore/${id}">Open checklist →</a><button class="link mute" data-act="untrack" data-id="${id}">Remove</button></div>`;
+        const p = byId(id), items = checklistItems(id), st = S.tracked[id];
+        const done = items.filter(([k]) => st.done[k]).length;
+        return `<div style="border-top:1px solid var(--line);padding:10px 0"><div class="row" style="justify-content:space-between"><b>${esc(nameOf(p))}</b><span class="small">${esc(t('dash.ready', { d: done, n: items.length }))}</span></div>${stepper(id)}
+          <a class="link" href="#/explore/${id}">${esc(t('dash.open'))}</a><button class="link mute" data-act="untrack" data-id="${id}">${esc(t('dash.remove'))}</button></div>`;
       }).join('')
-    : `<p class="small">None yet. Current top matches: ${R.top.slice(0, 3).map((r) => `<button class="link" data-act="explore" data-id="${r.id}">${esc(r.p.name)}</button>`).join(' · ') || '—'}</p>`;
-  return `<h2>My MSME</h2><p class="sub">Your discovery becomes an ongoing plan. Add information any time — matches update and we show what changed.</p>
+    : `<p class="small">${esc(t('dash.none'))} ${R.top.slice(0, 3).map((r) => `<button class="link" data-act="explore" data-id="${r.id}">${esc(nameOf(r.p))}</button>`).join(' · ') || '—'}</p>`;
+  return `<h2>${esc(t('dash.h2'))}</h2><p class="sub">${esc(t('dash.sub'))}</p>
   <div class="dash"><div class="stack">
-    <div class="box"><h3>Current need</h3><p style="margin:0 0 8px">“${esc(S.story)}”</p>${knownKeys(f).map((k) => `<span class="chip">${LABEL[k]}: ${esc(fmt(k, V(f, k)))}</span>`).join('')}</div>
-    <div class="box"><h3>Routes I'm exploring</h3>${tracked}</div>
-    <div class="box"><h3>Firm up your matches</h3>${slots.length
-      ? `<p class="small">Only questions that could change your current matches:</p>${slots.map((s) => `<div class="enrich"><b class="small">${esc(QUESTIONS[s].q)}</b><div class="row">${QUESTIONS[s].opts.map(([v, l]) => `<button class="secondary" data-act="enrich" data-slot="${s}" data-v="${attr(v)}">${esc(l)}</button>`).join('')}</div></div>`).join('')}`
-      : '<p class="small">Nothing more would change your matches right now.</p>'}
+    <div class="box"><h3>${esc(t('dash.need'))}</h3><p style="margin:0 0 8px">“${esc(S.story)}”</p>${knownKeys(f).map((k) => `<span class="chip">${esc(label(k))}: ${esc(fmt(k, V(f, k)))}</span>`).join('')}</div>
+    <div class="box"><h3>${esc(t('dash.routes'))}</h3>${tracked}</div>
+    <div class="box"><h3>${esc(t('dash.firm'))}</h3>${slots.length
+      ? `<p class="small">${esc(t('dash.firmS'))}</p>${slots.map((s) => `<div class="enrich"><b class="small">${esc(qText(s))}</b><div class="row">${QUESTIONS[s].opts.map(([v]) => `<button class="secondary" data-act="enrich" data-slot="${s}" data-v="${attr(v)}">${esc(optL(s, v))}</button>`).join('')}</div></div>`).join('')}`
+      : `<p class="small">${esc(t('dash.firmNone'))}</p>`}
       <div id="changed" aria-live="polite">${changed}</div></div>
   </div><div class="stack">
-    <div class="box"><h3>Journey</h3><div class="steps">${['Need identified', 'Options discovered', 'Eligibility understood', 'Documents prepared', 'Applied', 'Outcome'].map((s, i) => `<span class="step ${i <= maxStage ? 'done' : ''}">${s}</span>`).join('<span class="arrow">↓</span>')}</div></div>
-    <div class="box"><h3>Finance Saathi</h3><p class="small">Get a note summarising your situation to show a Saathi, DIC officer or bank.</p><button class="ghost" data-act="saathi">Prepare note</button></div>
-    <div class="box"><h3>Activity</h3><ul class="small" style="padding-left:18px;margin:0">${S.log.slice(0, 8).map((l) => `<li>${esc(l.t)} <span style="color:#98a2b3">· ${esc(l.at)}</span></li>`).join('') || '<li>Nothing yet</li>'}</ul></div>
-    <div class="box"><h3>Coming later</h3><p class="small">Alerts when a new programme becomes relevant · document reading (with your consent) to firm up matches · state & district schemes.</p></div>
+    <div class="box"><h3>${esc(t('dash.journey'))}</h3><div class="steps">${t('journey').map((s, i) => `<span class="step ${i <= maxStage ? 'done' : ''}">${esc(s)}</span>`).join('<span class="arrow">↓</span>')}</div></div>
+    <div class="box"><h3>${esc(t('saathi.h2'))}</h3><p class="small">${esc(t('dash.saathiS'))}</p><button class="ghost" data-act="saathi">${esc(t('dash.prepare'))}</button></div>
+    <div class="box"><h3>${esc(t('dash.activity'))}</h3><ul class="small" style="padding-left:18px;margin:0">${S.log.slice(0, 8).map((l) => `<li>${esc(l.t)} <span style="color:#98a2b3">· ${esc(l.at)}</span></li>`).join('') || `<li>${esc(t('dash.nothing'))}</li>`}</ul></div>
+    <div class="box"><h3>${esc(t('dash.later'))}</h3><p class="small">${esc(t('dash.laterS'))}</p></div>
   </div></div>
-  <div class="actions"><a class="btn secondary" href="#/results">View options</a><button class="secondary" data-act="reset">Clear my data</button><button class="primary" data-act="new-need">New need →</button></div>`;
+  <div class="actions"><a class="btn secondary" href="#/results">${esc(t('dash.view'))}</a><button class="secondary" data-act="reset">${esc(t('dash.clear'))}</button><button class="primary" data-act="new-need">${esc(t('dash.new'))}</button></div>`;
 }
 
 /* ---------------- Modals ---------------- */
 export function handoffText() {
-  const f = S.facts, R = rank(f);
-  const known = knownKeys(f).map((k) => `- ${LABEL[k]}: ${fmt(k, V(f, k))}`);
-  const tracked = Object.keys(S.tracked).map((id) => `- ${byId(id).name} (${STAGES[S.tracked[id].stage]})`);
-  const open = [...new Set(R.top.slice(0, 3).flatMap((r) => r.conds.filter((c) => c.state === 'unknown').map((c) => c.text)))].slice(0, 6).map((t) => '- ' + t);
-  return `MSME NAVIGATOR — NOTE FOR SAATHI / BANK
-In my words: "${S.story}"
+  const f = S.facts, R = rank(f), stages = t('stages');
+  const known = knownKeys(f).map((k) => `- ${label(k)}: ${fmt(k, V(f, k))}`);
+  const tracked = Object.keys(S.tracked).map((id) => `- ${nameOf(byId(id))} (${stages[S.tracked[id].stage]})`);
+  const open = [...new Set(R.top.slice(0, 3).flatMap((r) => r.conds.filter((c) => c.state === 'unknown').map((c) => tc(c.text))))].slice(0, 6).map((x) => '- ' + x);
+  return `${t('hand.title')}
+${t('hand.words')}: "${S.story}"
 
-What we know:
-${known.join('\n') || '- Very little so far'}
+${t('hand.know')}:
+${known.join('\n') || '- ' + t('hand.little')}
 
-Routes I'm exploring:
-${tracked.join('\n') || R.top.slice(0, 3).map((r) => '- ' + r.p.name).join('\n') || '- None yet'}
+${t('hand.routes')}:
+${tracked.join('\n') || R.top.slice(0, 3).map((r) => '- ' + nameOf(r.p)).join('\n') || '- ' + t('hand.noneYet')}
 
-Still to check:
-${open.join('\n') || '- Nothing recorded'}
+${t('hand.check')}:
+${open.join('\n') || '- ' + t('hand.nothing')}
 
-Note: generated by a prototype decision-support tool. Nothing here confirms eligibility or approval.`;
+${t('hand.note')}`;
 }
 export function saathiModal() {
-  return `<h2>Finance Saathi</h2><p class="sub">A trained person who helps translate your business need into the right formal channel.</p>
-  <div class="cols"><div><b class="small">A Saathi will</b><ul class="list met"><li>Understand your need</li><li>Explain why a route may be relevant</li><li>Point out what's missing</li><li>Take you to the official channel</li></ul></div>
-  <div><b class="small">A Saathi will not</b><ul class="list no"><li>Decide for you</li><li>Promise approval</li><li>Earn commission on any product</li><li>Replace the official application</li></ul></div></div>
-  <h3 style="margin-top:14px">Note to show a Saathi, DIC officer or bank</h3><pre class="hand" id="hand">${esc(handoffText())}</pre>
-  <div class="actions"><span class="small ok" id="copied" aria-live="polite"></span><button class="secondary" data-act="copy-hand">Copy note</button><button class="primary" data-act="close-modal">Done</button></div>
-  <p class="small">The Saathi network is a proposed service; a production version would connect to verified, trained local Saathis (e.g., via associations or DICs). Other official help: ${SUPPORT.map((s) => (s.url ? `<a href="${s.url}" target="_blank" rel="noopener">${esc(s.name)}</a>` : esc(s.name))).join(' · ')}.</p>`;
+  return `<h2>${esc(t('saathi.h2'))}</h2><p class="sub">${esc(t('saathi.sub'))}</p>
+  <div class="cols"><div><b class="small">${esc(t('saathi.will'))}</b><ul class="list met">${t('saathi.willList').map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>
+  <div><b class="small">${esc(t('saathi.wont'))}</b><ul class="list no">${t('saathi.wontList').map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div></div>
+  <h3 style="margin-top:14px">${esc(t('saathi.noteH'))}</h3><pre class="hand" id="hand">${esc(handoffText())}</pre>
+  <div class="actions"><span class="small ok" id="copied" aria-live="polite"></span><button class="secondary" data-act="copy-hand">${esc(t('saathi.copy'))}</button><button class="primary" data-act="close-modal">${esc(t('saathi.done'))}</button></div>
+  <p class="small">${esc(t('saathi.foot'))} ${SUPPORT.map((s) => (s.url ? `<a href="${s.url}" target="_blank" rel="noopener">${esc(tc(s.name))}</a>` : esc(tc(s.name)))).join(' · ')}.</p>`;
 }
 export function aboutModal() {
   const gov = CORPUS.filter((p) => p.family === 'gov' && p.type === 'direct');
   const fin = CORPUS.filter((p) => p.family === 'fin');
   const en = CORPUS.filter((p) => p.type === 'enabler');
-  return `<h2>About the data</h2><p class="sub"><b>Controlled prototype corpus — not every scheme in India.</b> Recorded ${RECORDED} from official sources; records are not live-verified. State, UT and district schemes are not yet included.</p>
-  <h3>Government programmes matched to owners (${gov.length})</h3><p class="small">${gov.map((p) => esc(p.name) + (p.status === 'verify' ? ' <span class="chip a">status to verify</span>' : '')).join(' · ')}</p>
-  <h3>Enablers — attached to routes, never a standalone answer (${en.length})</h3><p class="small">${en.map((p) => esc(p.name)).join(' · ')}</p>
-  <h3>Formal-finance route categories (${fin.length})</h3><p class="small">${fin.map((p) => esc(p.name)).join(' · ')} — no lender names, rates or approval odds.</p>
-  <h3>In corpus, not matched to individual owners (${INSTITUTIONAL.length})</h3><p class="small">${INSTITUTIONAL.map(esc).join(' · ')}</p>
-  <h3>How matching works</h3><p class="small">1) AI (when available) turns your words into facts — it never picks schemes. 2) Rules check each route's purpose and conditions: met / unknown / not met. 3) A known "not met" hides a route (with the reason); unknown never does. 4) Routes are ranked by need fit; actionability breaks ties. 5) Each extra question is chosen because its answer would change the top routes; we stop when it wouldn't.</p>
-  <h3>Your data</h3><p class="small">Your answers are stored only in this browser. When AI understanding is on, your description (and voice, if you use it) is sent to our server and to Groq to be read; we don't store it.</p>
-  <div class="actions"><button class="primary" data-act="close-modal">Close</button></div>`;
+  return `<h2>${esc(t('about.h2'))}</h2><p class="sub">${t('about.sub', { d: RECORDED })}</p>
+  <h3>${esc(t('about.gov', { n: gov.length }))}</h3><p class="small">${gov.map((p) => esc(nameOf(p)) + (p.status === 'verify' ? ` <span class="chip a">${esc(t('about.verify'))}</span>` : '')).join(' · ')}</p>
+  <h3>${esc(t('about.en', { n: en.length }))}</h3><p class="small">${en.map((p) => esc(nameOf(p))).join(' · ')}</p>
+  <h3>${esc(t('about.fin', { n: fin.length }))}</h3><p class="small">${fin.map((p) => esc(nameOf(p))).join(' · ')} ${esc(t('about.finNote'))}</p>
+  <h3>${esc(t('about.inst', { n: INSTITUTIONAL.length }))}</h3><p class="small">${INSTITUTIONAL.map((x) => esc(tc(x))).join(' · ')}</p>
+  <h3>${esc(t('about.howH'))}</h3><p class="small">${esc(t('about.how'))}</p>
+  <h3>${esc(t('about.dataH'))}</h3><p class="small">${esc(t('about.data'))}</p>
+  ${t('translationNote') ? `<p class="small">${esc(t('translationNote'))}</p>` : ''}
+  <div class="actions"><button class="primary" data-act="close-modal">${esc(t('about.close'))}</button></div>`;
 }
