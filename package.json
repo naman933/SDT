@@ -1,0 +1,20 @@
+{
+  "name": "msme-navigator",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "description": "MSME Navigator — helps small businesses discover relevant financial and support pathways without knowing scheme names.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3",
+    "vitest": "^3.2.7"
+  }
+}
