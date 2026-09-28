@@ -3,6 +3,10 @@
 export const L = 1e5;
 export const CR = 1e7;
 export const RECORDED = 'Sep 2026';
+// Day the corpus records were last checked against their official sources. Older than STALE_DAYS → "verify before acting".
+export const CHECKED = '2026-09-27';
+export const STALE_DAYS = 180;
+export const isStale = (today = new Date()) => (today - new Date(CHECKED)) / 864e5 > STALE_DAYS;
 
 export function inr(n) {
   if (n == null) return '—';
@@ -12,11 +16,21 @@ export function inr(n) {
 }
 
 // A fact is { v, o } where o = origin: said | ai | inferred | answered | unknown | sim.
-// 'unknown' is a real answer ("I don't know") — it is never treated as "no".
+// 'unknown' is a real answer ("I don't know") and 'declined' is "prefer not to say" — neither is ever treated as "no".
 export const V = (f, k) => {
   const x = f[k];
-  return x && x.v != null && x.v !== 'unknown' ? x.v : null;
+  return x && x.v != null && x.v !== 'unknown' && x.v !== 'declined' ? x.v : null;
 };
+
+// The profile areas used for "Based on X of Y profile areas". Each entry lists the fact keys that fill it.
+export const COVERAGE = [
+  ['need', ['need']], ['amount', ['amount']], ['stage', ['stage']], ['sector', ['activity', 'sector']],
+  ['state', ['state', 'city']], ['size', ['size']], ['urgency', ['urgency']], ['udyam', ['udyam']],
+];
+export function coverage(f) {
+  const known = COVERAGE.filter(([, keys]) => keys.some((k) => V(f, k) != null)).map(([a]) => a);
+  return { known, missing: COVERAGE.map(([a]) => a).filter((a) => !known.includes(a)), total: COVERAGE.length };
+}
 export const needsOf = (f) => {
   const v = V(f, 'need');
   return Array.isArray(v) ? v : [];

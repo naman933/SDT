@@ -16,7 +16,7 @@ const CITY_HI = {
   delhi: 'दिल्ली', chennai: 'चेन्नई', hyderabad: 'हैदराबाद', ahmedabad: 'अहमदाबाद', surat: 'सूरत', rajkot: 'राजकोट', kolkata: 'कोलकाता', jaipur: 'जयपुर',
   lucknow: 'लखनऊ', kanpur: 'कानपुर', indore: 'इंदौर', bhopal: 'भोपाल', ludhiana: 'लुधियाना', patna: 'पटना',
 };
-const STATES = ['Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh', 'Goa', 'Gujarat', 'Haryana', 'Himachal Pradesh', 'Jharkhand', 'Karnataka', 'Kerala', 'Madhya Pradesh', 'Maharashtra', 'Manipur', 'Meghalaya', 'Mizoram', 'Nagaland', 'Odisha', 'Punjab', 'Rajasthan', 'Sikkim', 'Tamil Nadu', 'Telangana', 'Tripura', 'Uttar Pradesh', 'Uttarakhand', 'West Bengal', 'Delhi', 'Jammu and Kashmir', 'Ladakh', 'Puducherry', 'Chandigarh'];
+export const STATES = ['Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh', 'Goa', 'Gujarat', 'Haryana', 'Himachal Pradesh', 'Jharkhand', 'Karnataka', 'Kerala', 'Madhya Pradesh', 'Maharashtra', 'Manipur', 'Meghalaya', 'Mizoram', 'Nagaland', 'Odisha', 'Punjab', 'Rajasthan', 'Sikkim', 'Tamil Nadu', 'Telangana', 'Tripura', 'Uttar Pradesh', 'Uttarakhand', 'West Bengal', 'Delhi', 'Jammu and Kashmir', 'Ladakh', 'Puducherry', 'Chandigarh'];
 
 // Largest amount mentioned, ignoring figures described as sales/turnover/revenue.
 const DEV_DIGITS = /[०-९]/g;

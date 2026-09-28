@@ -59,6 +59,7 @@ export const CORPUS = [
       stageNew('A brand-new business (your first venture)'),
       C('Borrower is a woman and/or SC/ST entrepreneur (for companies/firms: at least 51% held by them)', 'applicant', (f) => { const a = V(f, 'applicant'); return !a ? 'unknown' : a === 'none' ? 'not_met' : 'met'; }),
       C('Loan between ₹10 lakh and ₹1 crore', 'amount', (f) => { const a = V(f, 'amount'); return a == null ? 'unknown' : a >= 10 * L && a <= CR ? 'met' : 'not_met'; }),
+      always('The scheme is open for new applications — verify its current status', 'status'),
     ],
     info: [...DOCS_LOAN, ['Project plan for the new enterprise', 'typical']],
     route: { text: 'Apply through a bank branch or the Stand-Up Mitra / Udyamimitra portal', url: 'https://www.standupmitra.in/' },
@@ -281,6 +282,69 @@ const PLAIN = {
   invoice: ['Get money now against an unpaid bill, from a bank or finance company.', 'Ask your bank about bill discounting.'],
 };
 for (const p of CORPUS) if (PLAIN[p.id]) [p.short, p.next] = PLAIN[p.id];
+
+// What kind of help each route is, and how it works (only what the source text supports — no rates, fees or timelines).
+// support: loan | subsidy | invoice | remedy | market | capability | equity   (results are grouped by it)
+// repay:   the owner takes on a loan that must be repaid
+// flow:    broad process steps (see process.js) · grievance: complaint channel (see help.js)
+// prep:    a route-specific "before you begin" item, so no two checklists are the same
+const META = {
+  mudra: { support: 'loan', repay: true, flow: 'lender', grievance: 'lender', collateralFree: true,
+    mechanism: 'Loan from a bank, NBFC or MFI that must be repaid. MUDRA loans do not need collateral.',
+    prep: 'Know which MUDRA category your amount falls in (Shishu, Kishore, Tarun or Tarun Plus)' },
+  standup: { support: 'loan', repay: true, flow: 'lender', grievance: 'lender',
+    mechanism: 'Bank loan that must be repaid.', prep: 'Confirm this will be your first business venture' },
+  pmegp: { support: 'subsidy', repay: true, flow: 'pmegp', grievance: 'scheme',
+    mechanism: 'Credit-linked subsidy: a margin-money subsidy of 15–35% of the project cost (by category and area) is released through the bank. You put in 5–10% yourself, and the rest is a bank loan that must be repaid.',
+    prep: 'Confirm the unit is new, and prepare a simple project report' },
+  vishwakarma: { support: 'loan', repay: true, flow: 'csc', grievance: 'scheme',
+    mechanism: 'Collateral-free credit in two tranches (₹1 lakh, then ₹2 lakh) at a concessional rate, which must be repaid — plus a toolkit incentive and skill training.',
+    prep: 'Find your nearest Common Service Centre (CSC)' },
+  delayed: { support: 'remedy', flow: 'complaint', grievance: 'buyer',
+    mechanism: 'A legal remedy, not finance. Under the MSMED Act, a buyer who pays late owes interest on the delayed amount.',
+    prep: 'Check the agreed payment date on each unpaid invoice' },
+  ahidf: { support: 'subsidy', repay: true, flow: 'lender_portal', grievance: 'lender',
+    mechanism: 'Interest subvention: the government pays part of the interest on an eligible loan. The loan itself must be repaid.',
+    prep: 'Confirm the project is dairy processing, not buying cattle' },
+  gift: { support: 'subsidy', repay: true, flow: 'lender_portal', grievance: 'lender',
+    mechanism: 'Interest subvention and credit-guarantee support on an eligible loan. The loan itself must be repaid.',
+    prep: "Ask the lender whether your technology is on the scheme's green-technology list" },
+  spice: { support: 'subsidy', repay: true, flow: 'lender_portal', grievance: 'scheme',
+    mechanism: 'Capital subsidy of 25% of eligible plant & machinery cost, capped at ₹12.5 lakh (per the official portal). It is linked to a loan for the project, which must be repaid.',
+    prep: 'Check that the machinery is eligible circular-economy equipment' },
+  team: { support: 'market', flow: 'portal', grievance: 'scheme', mechanism: 'Help to sell online — not money.', prep: 'Take clear photos of your products' },
+  gem: { support: 'market', flow: 'portal', grievance: 'scheme', mechanism: 'Access to government buyers — not money.', prep: 'Keep your PAN and bank details ready for seller registration' },
+  marketing: { support: 'market', flow: 'office', grievance: 'scheme', mechanism: 'Support for taking part in fairs and events — not a loan.', prep: 'Pick the fair or event you want to attend' },
+  intl: { support: 'market', flow: 'office', grievance: 'scheme', mechanism: 'Support for international fairs and buyer meets — not a loan.', prep: 'Pick the international event or market you are targeting' },
+  zed: { support: 'capability', flow: 'portal', grievance: 'scheme', mechanism: 'Support on the cost of certification — not a loan.', prep: 'Keep your Udyam number ready' },
+  lean: { support: 'capability', flow: 'portal', grievance: 'scheme', mechanism: 'Expert support and certification — not a loan.', prep: 'Note where your work wastes time or material' },
+  esdp: { support: 'capability', flow: 'office', grievance: 'scheme', mechanism: 'Training — not finance.', prep: 'Decide which skill you want to learn' },
+  fof: { support: 'equity', flow: 'fund', grievance: 'scheme', mechanism: 'Equity investment through participating funds — not a loan. Investors take a share of your business.', prep: 'Prepare financial statements for investors' },
+  nssh: { support: 'market', flow: 'office', grievance: 'scheme', mechanism: 'Capacity-building and market-access support — not a loan.', prep: 'Keep proof of SC/ST ownership ready' },
+  sclcss: { support: 'subsidy', repay: true, flow: 'office', grievance: 'scheme', mechanism: 'Capital subsidy linked to a loan that must be repaid — current status to be confirmed.', prep: 'Check the current status of the scheme first' },
+  bank_term: { support: 'loan', repay: true, flow: 'lender', grievance: 'lender',
+    mechanism: 'Loan repaid in instalments. Interest, fees and collateral depend on the bank.', prep: 'Get a quotation for the machine or expansion cost' },
+  bank_wc: { support: 'loan', repay: true, flow: 'lender', grievance: 'lender',
+    mechanism: 'Revolving credit limit: you pay interest on what you use and must repay what you draw. Terms depend on the bank.', prep: 'Work out how much stock and running money you need each month' },
+  nbfc: { support: 'loan', repay: true, flow: 'lender', grievance: 'lender',
+    mechanism: 'Loan that must be repaid. Terms depend on the NBFC — compare the total cost.', prep: 'Check that the NBFC is registered with the RBI before you apply' },
+  vendor: { support: 'loan', repay: true, flow: 'lender', grievance: 'lender',
+    mechanism: "Loan from the seller's partner lender that must be repaid.", prep: "Compare the seller's finance offer with a direct bank loan" },
+  treds: { support: 'invoice', flow: 'treds', grievance: 'lender', recourse: 'none',
+    mechanism: 'Invoice discounting: you get the invoice amount minus a discount now, and the buyer pays the financier on the due date. Under the RBI framework this is without recourse to the MSME seller.',
+    prep: 'Check whether your buyer is registered on a TReDS platform' },
+  invoice: { support: 'invoice', repay: true, flow: 'lender', grievance: 'lender', recourse: 'check',
+    mechanism: "An advance against an unpaid invoice, for a fee or interest. Check whether you must repay it if the buyer doesn't pay (recourse).",
+    prep: 'List your unpaid invoices and the buyers' },
+};
+for (const p of CORPUS) if (META[p.id]) Object.assign(p, META[p.id]);
+
+// Funding lanes are kept apart and never added together.
+export const LANE = { loan: 'loan', subsidy: 'grant', invoice: 'receivable', remedy: 'receivable' };
+// 'official' = a named official source (recorded, not live-checked); 'general' = general practice, no single source.
+export const evidenceOf = (p) => (p.src ? 'official' : 'general');
+// Channel the owner uses: online · inperson · both.
+export const channelOf = (p) => ({ online: 'online', mixed: 'both' }[p.access] || 'inperson');
 
 export const byId = (id) => CORPUS.find((p) => p.id === id);
 

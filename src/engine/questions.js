@@ -65,7 +65,48 @@ export const QUESTIONS = {
     opts: [['yes', 'Yes'], ['no', 'No']],
     dashboardOnly: true,
   },
+
+  // Optional business profile ("Add details"). Never asked during discovery; each says why it is asked.
+  sector: {
+    q: 'What kind of business is it?',
+    why: 'Some routes cover only certain activities (for example, crop farming is treated differently).',
+    opts: [['manufacturing', 'Making things (manufacturing)'], ['services', 'Services'], ['trading', 'Buying and selling (trading)'], ['dairy', 'Dairy or animal husbandry'], ['agri_crop', 'Crop farming']],
+    profileOnly: true,
+  },
+  entity: {
+    q: 'How is the business set up?',
+    why: 'Used only to prepare your checklist — the papers asked for can differ. It never hides a route.',
+    opts: [['proprietor', 'Sole owner (proprietorship)'], ['partnership', 'Partnership'], ['company', 'LLP or company']],
+    profileOnly: true,
+  },
+  gst: {
+    q: 'Do you have GST registration?',
+    why: 'Not every business needs GST, and no route here requires it for everyone. It helps us prepare your checklist.',
+    opts: [['yes', 'Yes'], ['no', 'No'], ['not_needed', 'Not needed for my business']],
+    profileOnly: true,
+  },
+  records: {
+    q: 'Which financial records do you have?',
+    why: 'Lenders often ask for records. Having some ready can make a loan route easier to start. It never hides a route.',
+    opts: [['itr', 'Income tax returns or business accounts'], ['bank', 'Only bank statements'], ['none', 'None yet']],
+    profileOnly: true,
+  },
+  collateral: {
+    q: 'Could you offer property, gold or machinery as security for a loan?',
+    why: 'Optional. Used only to suggest questions for the lender, such as a CGTMSE guarantee. Many routes do not need collateral.',
+    opts: [['yes', 'Yes'], ['no', 'No']],
+    profileOnly: true,
+  },
+  channel_pref: {
+    q: 'How would you prefer to apply?',
+    why: 'We show routes that suit how you like to work a little higher. Nothing is hidden.',
+    opts: [['online', 'Online'], ['inperson', 'In person, at a branch or office'], ['any', 'Either is fine']],
+    profileOnly: true,
+  },
 };
+// Profile editor order. `applicant` and `collateral` also offer "Prefer not to say".
+export const PROFILE_SLOTS = ['need', 'amount', 'stage', 'sector', 'state', 'size', 'urgency', 'channel_pref', 'udyam', 'gst', 'records', 'entity', 'collateral', 'applicant'];
+export const SENSITIVE = ['applicant', 'collateral'];
 
 // Tie-break order when two questions have equal information value.
 export const ASK_ORDER = ['amount', 'stage', 'buyer_type', 'overdue', 'dairy_type', 'green_tech', 'applicant', 'artisan_trade', 'size', 'urgency'];

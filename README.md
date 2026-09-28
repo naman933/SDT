@@ -2,7 +2,9 @@
 
 > Tell us what's happening in your business. We'll help you figure out what to explore next.
 
-MSME Navigator helps small-business owners in India find financial and support routes that fit their situation, without needing to know any scheme name. The owner describes their situation in plain words (any language, typed or spoken). The app understands it, asks at most 4 follow-up questions, and shows government schemes alongside bank and NBFC options. For each route it explains why it surfaced, what is known, what still needs checking, and the official next step.
+MSME Navigator helps small-business owners in India find financial and support routes that fit their situation, without needing to know any scheme name. The owner describes their situation in plain words, typed or spoken, in English, Hindi or Hinglish. The app understands it, asks at most 4 follow-up questions, and shows government schemes alongside bank and NBFC options. For each route it explains why it surfaced, what is known, what still needs checking, and the official next step. It then gives the owner a route-specific checklist, drafts and a follow-up trail.
+
+It is built to the project's design spec; see [docs/SPEC_COVERAGE.md](docs/SPEC_COVERAGE.md) for what is covered and what is not.
 
 This is a prototype built on a **controlled corpus**, not a list of every scheme in India. Its results are **decision support, not approval**.
 
@@ -12,13 +14,25 @@ Five steps, shown as a bar at the top of every screen:
 
 1. **Tell us:** press and speak, tap a picture tile, or type. The screen says: free, no documents, about 3 minutes.
 2. **A few questions:** at most 4, one per screen. "I don't know" is always an answer. What we understood appears as chips the owner can edit, and anything we assumed is marked **?** so they can confirm it.
-3. **Your options:** a **"Your best next step"** card first, then short three-line cards (what it is / why for you / what to do) with a 🟢/🟡 badge. Full details are behind "See details".
-4. **Get ready:** a paper checklist with *I have it / I don't have it / What is this?*, questions to confirm, where to go, and a **"Take this with you"** one-page summary to share on WhatsApp or print.
+3. **Your options:** an **"A good place to start"** card first, then cards grouped by kind of help (loans, subsidy, unpaid bills, markets…), each labelled government or bank/NBFC and "loan — must be repaid" or "not a loan", with a 🟢/🟡 badge, the key thing to confirm, and the source date. Filters narrow the list.
+4. **Get ready:** the route's own checklist with a status on every item, drafts (enquiry, project summary, one-page summary), questions to ask, and where to go.
 5. **Apply & track:** the owner reports *Not applied yet / Waiting / Approved / Not approved*. "Not approved" leads to the other options.
 
-Available on every screen: **Help** (Saathi note and official portals), **Read aloud** (the browser's own voice), tap-to-explain jargon (NBFC, collateral, working capital…), and the English/हिंदी switch. **Expert view** in the footer shows the scores and matching logic for reviewers. Returning users get a *Welcome back — continue where you left off* card.
+Around the journey:
+
+- **Route detail** (`#/route/:id`): why it appeared, fit panel (known / to confirm / hard gates / evidence), benefits and terms (only recorded values, otherwise "Check current terms"), how to apply. Actions: start checklist, compare, save, draft an enquiry, open official source.
+- **Compare** (`#/compare`): routes side by side.
+- **Checklist** (`#/explore/:id`): six sections (before you begin, eligibility, documents, steps, after you apply, follow-up), each item with a status and a note. Drafts: enquiry message, project summary, one-page summary.
+- **Funding** (`#/funding`): grants, loans and receivables in separate lanes, plus an illustrative EMI calculator that uses the rate the owner enters.
+- **Help & grievance** (`#/help`): Saathi note, official complaint route with escalation, evidence list, editable complaint draft, and a record of the date, reference and follow-up.
+- **Profile** (`#/profile`): optional details with *Not sure* / *Prefer not to say*; each change shows what it did to the matches.
+- **My journey** (`#/my-msme`): progress, follow-ups, source freshness, download plan or data, clear data.
+
+Available on every screen: **Read aloud** (the browser's own voice), tap-to-explain jargon (NBFC, collateral, working capital…) and the English/हिंदी switch. **Expert view** in the footer shows the 8-dimension relevance breakdown for reviewers.
 
 ## Architecture
+
+**Current mode: everything runs in the browser.** Understanding is rule-based, voice typing uses the browser's own speech recognition (Chrome/Edge), read-aloud uses the browser's speech synthesis, and data stays in `localStorage`. No request goes to `/api`. The serverless AI below is kept in the repo and can be switched back on with `SERVER_AI = true` in `src/config.js`.
 
 ```
 Browser (Vite, vanilla JS)                    Vercel serverless (api/)
@@ -37,32 +51,33 @@ Browser (Vite, vanilla JS)                    Vercel serverless (api/)
 ```
 
 - **The AI only extracts facts from the owner's words.** It never picks schemes or decides eligibility. A transparent rules engine (`src/engine/`) does the matching, and the app falls back to rule-based understanding if the AI is unavailable.
-- **Scoring:**
+- **Scoring (Policy Relevance Score, from the design spec):**
   1. Hard gates first: a known "not met" condition hides a route and shows the reason. An unknown never does.
-  2. Need fit ranks the routes.
-  3. Conditions are shown as met / unknown / not met and are not added to the score.
-  4. Actionability breaks ties.
+  2. Routes are ranked by 8 weighted dimensions: need fit 25, business fit 15, amount 10, location/channel 10, eligibility evidence 15, readiness 10, timing 5, preference/effort 10. Unknown facts score a neutral value, never zero.
+  3. Conditions are shown as met / unknown / not met. The score means "worth exploring", never an approval chance.
 - **Questions:** the app asks the unanswered question whose answer would most change the top routes, and stops when no answer would change them (max 4).
 
 ```
-src/engine/core.js        money formatting, fact access, need taxonomy, enums
-src/engine/corpus.js      programmes, finance route categories, enablers (with sources)
+src/config.js             SERVER_AI switch (off = browser-only)
+src/engine/core.js        money formatting, fact access, need taxonomy, coverage, source dates
+src/engine/corpus.js      programmes, finance route categories, enablers (with sources, support type, mechanism)
+src/engine/process.js     broad process steps, before/after items, grievance channels, official contacts
+src/engine/checklist.js   route-specific checklists and readiness
 src/engine/questions.js   plain-language questions
 src/engine/engine.js      evaluate / rank / pickQuestion / openSlots
 src/engine/understand.js  rule-based parser, AI prompt + sanitiser
 src/ui/views.js           render functions (state → HTML)
 src/main.js               router, event delegation, voice, boot
 api/                      Vercel functions (understand, transcribe, health)
-tests/                    jury scenarios + parser/sanitiser tests
+tests/                    jury scenarios, parser tests, spec guardrails, 100-case audit (docs/AUDIT.md)
 ```
 
 ## Run locally
 
 ```bash
 npm install
-cp .env.example .env.local     # add GROQ_API_KEY (optional — rule-based mode without it)
-npm run dev                    # http://localhost:5173 — /api works via the dev server
-npm test                       # scenario, guardrail and translation-coverage tests
+npm run dev                    # http://localhost:5173 — no key needed in browser-only mode
+npm test                       # 166 tests: scenarios, spec guardrails, translations, 100-case audit
 npm run build                  # production build to dist/
 ```
 
@@ -82,7 +97,7 @@ vercel env add GROQ_API_KEY # paste the key; choose Production (and Preview if w
 vercel --prod
 ```
 
-After deploying, open `/api/health`. It should return `{"ai":true}`.
+In browser-only mode (`SERVER_AI = false`, the current setting) no environment variables are needed; the app never calls `/api`. If you switch the server AI on, set `GROQ_API_KEY` and open `/api/health` after deploying. It should return `{"ai":true}`.
 
 ## Languages (English / हिंदी)
 
@@ -90,7 +105,8 @@ The **हिंदी / English** button in the header switches the whole interf
 
 - `src/i18n/strings.js` holds the UI text (`en` and `hi`). Hindi-only keys cover needs, questions and labels; their English text comes from the data itself.
 - `src/i18n/corpus.hi.js` holds the Hindi versions of the corpus text, keyed by the exact English string in `corpus.js`. If you edit an English string there, update this file too, or `npm test` will fail.
-- With AI on, the summary comes back in the selected language. Without AI, the rules also understand Devanagari (e.g. "8 लाख", "मशीन", "भुगतान नहीं").
+- The rules understand English, Hinglish and Devanagari Hindi (e.g. "8 लाख", "मशीन", "भुगतान नहीं"). The "we understood" summary is built from the facts, so it is always in the selected language.
+- Voice typing uses the browser (best in Chrome or Edge) in Hindi or English. If the browser has none, the page says so and typing still works.
 - The page says that the Hindi text is a translation and that the official source takes precedence.
 
 To add a language, add a block to `strings.js` and a `corpus.<lang>.js` file, register the language in `LANGS` (`src/i18n/index.js`), and extend `tests/i18n.test.js`.
@@ -108,7 +124,8 @@ To add a language, add a block to `strings.js` and a `corpus.<lang>.js` file, re
   - set a **spend limit on the Groq account**;
   - add a **Vercel Firewall rate-limit rule** for `/api/*`;
   - rotate any key that has been shared in chat or email.
-- The owner's answers are stored only in their browser (`localStorage`). Descriptions and audio pass through the server to Groq for understanding and are not stored.
+- The owner's answers are stored only in their browser (`localStorage`). In browser-only mode nothing is sent to our server. The browser's own voice typing may send audio to the browser maker (e.g. Google in Chrome); the About page says so.
+- Drafts and complaints are never sent by the app: "Open in my email app" opens the owner's own email client.
 - Security headers, including a strict CSP, are set in `vercel.json`.
 
 ## Updating the corpus
@@ -118,7 +135,9 @@ Each record in `src/engine/corpus.js` has `purposes`, `conditions` (each with a 
 ## Known limits
 
 - Central programmes only; state, UT and district schemes are not yet included.
+- Interface in English and Hindi only; Marathi, Kannada, Gujarati and Tamil need professional translation.
+- No file upload (it needs secure server storage); document status and notes are kept instead.
 - Records were recorded in Sep 2026 and are not live-verified.
 - Nearby support uses a live map search, not a curated list of verified support points.
 - Finance Saathi is a proposed service; the app generates a hand-off note.
-- Not yet built: reading documents and proactive alerts. The interface is available in English and Hindi, and spoken or typed input works in any language.
+- Not yet built: reading documents, proactive alerts, accounts and cross-device sync.

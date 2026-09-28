@@ -1,14 +1,46 @@
-// Matching engine: gates -> need fit (ranks) -> conditions (shown, not added) -> actionability (tie-break).
+// Matching engine: hard gates -> Policy Relevance Score (8 dimensions, ranks the list) -> conditions shown as met / unknown / not met.
+// Relevance organises exploration; it is never an eligibility or approval probability.
 // Pure functions of the facts object; no DOM, no network. Heuristic prototype weights — not validated.
 import { V, needsOf, NEEDS, inr } from './core.js';
-import { CORPUS, byId } from './corpus.js';
+import { CORPUS, byId, channelOf } from './corpus.js';
 import { QUESTIONS, ASK_ORDER, MAX_QUESTIONS } from './questions.js';
 
 const MIN_PURPOSE = 0.5; // below this a route is not a candidate at all
-const MIN_FIT = 50;
+const MIN_CORE = 0.5; // need + beneficiary + amount below half → "weak match", not shown
+
+// Weights from the design spec (sum 100). Unknown facts score a neutral value — never zero.
+export const DIMENSIONS = {
+  need: 25, beneficiary: 15, amount: 10, geo: 10, evidence: 15, readiness: 10, timing: 5, preference: 10,
+};
+const mean = (xs) => xs.reduce((s, x) => s + x, 0) / xs.length;
 
 function purposeFor(p, f, n) {
   return p.purposeFn ? p.purposeFn(f, n) : p.purposes?.[n] || 0;
+}
+
+// How much user-confirmed information supports the route's own conditions (unknown = neutral 0.5).
+// The lender's own assessment applies to every loan and is left out, so loans are not marked down for it.
+function evidenceScore(conds) {
+  const cs = conds.filter((c) => c.kind !== 'fixable' && c.slot !== 'lender');
+  return cs.length ? mean(cs.map((c) => (c.state === 'met' ? 1 : 0.5))) : 0.5;
+}
+
+// Are key prerequisites already in place? Only facts the owner gave count; nothing known → neutral.
+function readinessScore(p, f, conds) {
+  const signals = [];
+  const u = V(f, 'udyam');
+  if (u && conds.some((c) => c.slot === 'udyam')) signals.push(u === 'yes' ? 1 : 0.3);
+  const rec = V(f, 'records');
+  if (rec && p.repay) signals.push({ itr: 1, bank: 0.6, none: 0.3 }[rec]);
+  return signals.length ? mean(signals) : 0.5;
+}
+
+function preferenceScore(p, f) {
+  const pref = V(f, 'channel_pref');
+  const ch = channelOf(p);
+  const fit = !pref || pref === 'any' ? 0.7 : ch === 'both' ? 0.8 : ch === pref ? 1 : 0.4;
+  const effort = Math.max(0, Math.min(1, 1 - (p.steps - 2) / 8)); // fewer steps = less effort
+  return (fit + effort) / 2;
 }
 
 export function evaluate(p, f) {
@@ -36,21 +68,30 @@ export function evaluate(p, f) {
 
   const want = new Set(needs.flatMap((n) => NEEDS[n]?.want || []));
   const outcome = (p.delivers || []).some((d) => want.has(d)) ? 1 : 0.5;
-
-  const parts = { Purpose: [purpose, 45], Amount: [scale, 20], Stage: [stage, 20], Outcome: [outcome, 15] };
-  const fit = Math.round(Object.values(parts).reduce((s, [v, w]) => s + v * w, 0));
+  // A targeted route (dairy, artisans, SC/ST) that passed its relevance check fits the beneficiary profile.
+  const beneficiary = p.relevantIf ? Math.max(stage, 0.8) : stage;
 
   const access = { online: 1, lender: 0.8, mixed: 0.7, agency: 0.6 }[p.access] ?? 0.6;
-  const steps = Math.max(0, Math.min(1, 1 - (p.steps - 2) / 8));
   const timing = !u ? 0.8 : u === 'week' ? { fast: 1, medium: 0.5, slow: 0.2 }[p.speed] : u === 'month' ? { fast: 1, medium: 0.9, slow: 0.5 }[p.speed] : 1;
-  const aparts = { 'Clear official route': [p.route?.url ? 1 : 0.6, 30], 'Easy to reach': [access, 25], 'Few steps': [steps, 25], 'Fits your timing': [timing, 20] };
-  const act = Math.round(Object.values(aparts).reduce((s, [v, w]) => s + v * w, 0));
+  const values = {
+    need: 0.75 * purpose + 0.25 * outcome,
+    beneficiary,
+    amount: scale,
+    geo: (1 + access) / 2, // every route in the corpus is national, so only the channel varies
+    evidence: evidenceScore(conds),
+    readiness: readinessScore(p, f, conds),
+    timing,
+    preference: preferenceScore(p, f),
+  };
+  const parts = Object.fromEntries(Object.entries(DIMENSIONS).map(([k, w]) => [k, [values[k], w]]));
+  const fit = Math.round(Object.values(parts).reduce((s, [v, w]) => s + v * w, 0));
+  const core = (values.need * 25 + values.beneficiary * 15 + values.amount * 10) / 50;
 
   const blocked = conds.find((c) => c.kind === 'mandatory' && c.state === 'not_met');
   const unknownMandatory = conds.filter((c) => c.kind === 'mandatory' && c.state === 'unknown');
   let status;
   if (p.status === 'verify' || blocked) status = 'no';
-  else if (fit < MIN_FIT) status = 'weak';
+  else if (core < MIN_CORE) status = 'weak';
   else status = unknownMandatory.length ? 'check' : 'yes';
 
   const overMax = a != null && !!p.amount && a > p.amount.max;
@@ -59,15 +100,18 @@ export function evaluate(p, f) {
   else if (blocked) reason = 'Not met: ' + blocked.text;
   else if (overMax) reason = `Covers up to ${inr(p.amount.max)}; you mentioned ${inr(a)}`;
 
-  return { id: p.id, p, purpose, need, fit, parts, act, aparts, conds, status, reason, blocked, overMax };
+  return { id: p.id, p, purpose, need, fit, parts, core, conds, status, reason, blocked, overMax };
 }
+
+// Higher relevance first; fewer steps breaks ties.
+const byRelevance = (a, b) => b.fit - a.fit || a.p.steps - b.p.steps;
 
 export function rank(f) {
   const all = CORPUS.map((p) => evaluate(p, f)).filter(Boolean);
-  const shown = all.filter((r) => r.status === 'yes' || r.status === 'check').sort((a, b) => b.fit - a.fit || b.act - a.act);
+  const shown = all.filter((r) => r.status === 'yes' || r.status === 'check').sort(byRelevance);
   const gov = shown.filter((r) => r.p.family === 'gov').slice(0, 3);
   const fin = shown.filter((r) => r.p.family === 'fin').slice(0, 3);
-  const top = [...gov, ...fin].sort((a, b) => b.fit - a.fit || b.act - a.act);
+  const top = [...gov, ...fin].sort(byRelevance);
   const hidden = [...all.filter((r) => r.status === 'no'), ...shown.filter((r) => !top.includes(r)), ...all.filter((r) => r.status === 'weak')];
   const want = new Set(needsOf(f).flatMap((n) => NEEDS[n]?.want || []));
   const govDirect = gov.filter((r) => (r.p.delivers || []).some((d) => want.has(d)));
@@ -129,5 +173,3 @@ export function openSlots(f) {
 
 // Bands are keys; the UI turns them into words in the current language.
 export const fitBand = (s) => (s >= 80 ? 'strong' : s >= 65 ? 'worth' : s >= 50 ? 'possible' : 'unlikely');
-export const actBand = (s) => (s >= 75 ? 'easy' : s >= 55 ? 'some' : 'several');
-export const STATUS_TONE = { yes: 'g', check: 'a', no: 'r', weak: '' };

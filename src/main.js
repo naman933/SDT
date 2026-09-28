@@ -1,32 +1,38 @@
 import './styles.css';
 import { S, save, resetAll, startNewJourney, logEvent } from './state.js';
-import * as api from './api.js';
+import { SERVER_AI } from './config.js';
 import {
   QUESTIONS, byId, rank, pickQuestion, ruleUnderstand, factsFromExtraction, finaliseFacts, parseAmount,
 } from './engine/index.js';
 import {
-  esc, label, fmt, outcomeL, journeyHtml, startView, understandView, questionView, resultsView, readyView, trackView, dashView,
-  nearbyHtml, helpModal, sheetModal, termModal, chipModal, aboutModal, handoffText, sheetText,
+  esc, label, fmt, outcomeL, journeyHtml, startView, understandView, questionView, resultsView, routeView, compareView,
+  readyView, trackView, dashView, fundingView, helpView, profileView, nearbyHtml, emiHtml, FILTERS,
+  noteModal, sheetModal, draftModal, termModal, chipModal, aboutModal, handoffText, sheetText, planText,
 } from './ui/views.js';
 import { t, tc, getLang, setLang, LANGS } from './i18n/index.js';
 
 const $ = (id) => document.getElementById(id);
 const view = $('view');
 const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+let api = null; // the /api client is loaded only when SERVER_AI is on
 const env = {
-  ai: false, checked: false,
+  ai: false, checked: !SERVER_AI,
   canRecord: !!(navigator.mediaDevices?.getUserMedia && window.MediaRecorder),
   tts: 'speechSynthesis' in window,
-  // Speaking works with Whisper (AI on) or, as a fallback, the browser's own speech recognition.
+  // Voice typing uses the browser's own speech recognition (or Whisper when server AI is switched on).
   get canSpeak() { return (this.ai && this.canRecord) || !!SpeechRec; },
 };
 
 /* ---------------- Routing ---------------- */
-// #/  #/check  #/question  #/results  #/explore/:id (Get ready)  #/track/:id  #/my-msme
+// #/  #/check  #/question  #/results  #/route/:id  #/compare  #/explore/:id (Get ready)  #/track/:id
+// #/my-msme (My journey)  #/funding  #/help  #/profile
+const NEEDS_STORY = ['check', 'question', 'results', 'route', 'compare', 'explore', 'track'];
+const isRoute = (id) => byId(id)?.type === 'direct';
 function journeyStepFor(name) {
   switch (name) {
+    case '': return 1;
     case 'check': case 'question': return 2;
-    case 'results': return 3;
+    case 'results': case 'route': case 'compare': return 3;
     case 'explore': return 4;
     case 'track': return 5;
     case 'my-msme': {
@@ -35,12 +41,12 @@ function journeyStepFor(name) {
       if (ids.length) return 4;
       return S.lastTop.length ? 3 : S.story ? 2 : 1;
     }
-    default: return 1;
+    default: return 0; // help, funding, profile: no journey bar
   }
 }
 function route({ keepScroll = false } = {}) {
   const [, name = '', arg] = location.hash.split('/');
-  if (['check', 'question', 'results', 'explore', 'track'].includes(name) && !S.story) return redirect('#/');
+  if (NEEDS_STORY.includes(name) && !S.story) return redirect('#/');
   let html;
   switch (name) {
     case 'check': html = understandView(); break;
@@ -48,24 +54,41 @@ function route({ keepScroll = false } = {}) {
       if (!S.curQ) return redirect('#/check');
       html = questionView(); break;
     case 'results': html = resultsView(); break;
+    case 'route':
+      if (!isRoute(arg)) return redirect('#/results');
+      html = routeView(arg); break;
+    case 'compare': html = compareView(); break;
     case 'explore':
     case 'track':
-      if (!byId(arg)) return redirect('#/results');
+      if (!isRoute(arg)) return redirect('#/results');
       if (!S.tracked[arg]) track(arg);
       html = name === 'explore' ? readyView(arg) : trackView(arg); break;
     case 'my-msme': html = dashView(); break;
+    case 'funding': html = fundingView(); break;
+    case 'help': html = helpView(); break;
+    case 'profile': html = profileView(); break;
     default: html = startView(env);
   }
   stopSpeaking();
   stopMic();
   $('journey').innerHTML = journeyHtml(journeyStepFor(name));
   view.innerHTML = html;
+  setNav(name);
   if (!keepScroll) window.scrollTo(0, 0);
   view.focus({ preventScroll: true });
 }
 function redirect(hash) { history.replaceState(null, '', hash); route(); } // no Back-button trap
 function navigate(hash) { if (location.hash === hash) route(); else location.hash = hash; }
 window.addEventListener('hashchange', () => route());
+
+// Highlight the current area in the top bar; the funding dashboard appears once there are results.
+function setNav(name) {
+  $('navFunding').hidden = !S.lastTop.length;
+  for (const [id, n] of [['navHelp', 'help'], ['navMy', 'my-msme'], ['navFunding', 'funding']]) {
+    const el = $(id);
+    if (name === n) el.setAttribute('aria-current', 'page'); else el.removeAttribute('aria-current');
+  }
+}
 
 /* ---------------- Journey logic ---------------- */
 async function startJourney(text) {
@@ -120,9 +143,10 @@ function showResults() {
 }
 
 function track(id) {
-  S.tracked[id] = { docs: {}, outcome: null, added: new Date().toISOString() };
+  S.tracked[id] = { docs: {}, items: {}, notes: {}, drafts: {}, draftState: {}, outcome: null, added: new Date().toISOString() };
   logEvent(t('log.started', { n: tc(byId(id).name) }));
 }
+const trackedOf = (id) => { if (!S.tracked[id]) track(id); return S.tracked[id]; };
 
 // Changing a fact re-runs the question loop, which asks for it again only if it matters.
 function dropFact(k) {
@@ -133,10 +157,11 @@ function dropFact(k) {
   nextQuestion();
 }
 
-function enrich(slot, v) {
+// Apply a change to the facts and describe what it did to the leading routes (refinement loop).
+function changeNote(mutate) {
   const key = (r) => r.id + ':' + r.status;
   const before = rank(S.facts).top.slice(0, 4).map(key);
-  S.facts[slot] = { v, o: 'answered' };
+  mutate();
   const R = rank(S.facts);
   const after = R.top.slice(0, 4).map(key);
   const idOf = (x) => x.split(':')[0];
@@ -146,8 +171,17 @@ function enrich(slot, v) {
   before.filter((x) => !after.some((a) => idOf(a) === idOf(x))).forEach((x) => msgs.push(t('changed.gone', { n: name(x) })));
   after.forEach((x) => { const b = before.find((y) => idOf(y) === idOf(x)); if (b && b !== x) msgs.push(`${name(x)}: ${t('status.' + x.split(':')[1])}`); });
   S.lastTop = R.top.map((r) => r.id);
-  logEvent(t('log.added', { l: label(slot), v: fmt(slot, v) }));
-  view.innerHTML = dashView(`<div class="note"><b>${esc(t('changed.t'))}</b> ${msgs.length ? msgs.map(esc).join(' · ') : esc(t('changed.none'))}</div>`);
+  save();
+  return `<div class="note"><b>${esc(t('changed.t'))}</b> ${msgs.length ? msgs.map(esc).join(' · ') : esc(t('changed.none'))}</div>`;
+}
+function setFact(slot, v) {
+  if (v === undefined) delete S.facts[slot];
+  else S.facts[slot] = { v, o: v === 'unknown' ? 'unknown' : v === 'declined' ? 'declined' : 'answered' };
+}
+function profileChange(slot, v) {
+  const note = changeNote(() => setFact(slot, v));
+  logEvent(t('log.added', { l: label(slot), v: v === undefined ? t('pf.notSet') : fmt(slot, v) }));
+  view.innerHTML = profileView(note);
 }
 
 /* ---------------- Modal ---------------- */
@@ -156,7 +190,7 @@ function openModal(html) {
   lastFocus = document.activeElement;
   $('modalBody').innerHTML = html;
   $('modal').hidden = false;
-  $('modalBody').querySelector('button, a')?.focus();
+  $('modalBody').querySelector('textarea, button, a')?.focus();
 }
 function closeModal() {
   if ($('modal').hidden) return;
@@ -178,7 +212,7 @@ function speak(targetId, btn) {
   const el = $(targetId);
   if (!el) return;
   const clone = el.cloneNode(true);
-  clone.querySelectorAll('button:not(.term), details, .expert-only, .chip').forEach((n) => n.remove());
+  clone.querySelectorAll('button:not(.term), details, select, .expert-only, .chip').forEach((n) => n.remove());
   const text = clone.textContent.replace(/\s+/g, ' ').replace(/[✓✗•⭐🔊📄]/g, '').trim();
   const u = new SpeechSynthesisUtterance(text);
   u.lang = getLang() === 'hi' ? 'hi-IN' : 'en-IN';
@@ -193,8 +227,8 @@ function speak(targetId, btn) {
 
 /* ---------------- Voice input ----------------
    Two buttons share one state: the big "Press and speak" and the mic inside the text box.
-   AI on  → record, then transcribe with Groq Whisper (/api/transcribe) — any language.
-   AI off → browser speech recognition, words appear live in the box (hi-IN / en-IN). */
+   Browser-only mode → the browser's speech recognition; words appear live in the box (hi-IN / en-IN).
+   Server AI on      → record, then transcribe with Whisper (/api/transcribe) — any language. */
 let recorder = null, recognition = null, starting = false, cancelStart = false;
 function setMicUI(on) {
   const big = $('micBtn'), inline = $('micInline');
@@ -212,6 +246,7 @@ async function toggleMic(d) {
   if (d?.focus) $('story')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   if (env.ai && env.canRecord) return recordForWhisper();
   if (SpeechRec) return liveDictation();
+  micNote(t('mic.noVoice'));
 }
 async function recordForWhisper() {
   // Show "Stop" at once; a second tap while the browser asks for mic permission cancels cleanly.
@@ -243,6 +278,7 @@ async function recordForWhisper() {
     micNote(t('mic.unavailable', { e: e.message }));
   }
 }
+const MIC_ERRORS = { 'not-allowed': 'mic.denied', 'service-not-allowed': 'mic.denied', 'no-speech': 'mic.noSpeech', network: 'mic.network', 'audio-capture': 'mic.noMic' };
 function liveDictation() {
   const box = $('story');
   if (!box) return;
@@ -257,10 +293,13 @@ function liveDictation() {
     for (let i = 0; i < e.results.length; i++) said += e.results[i][0].transcript;
     box.value = (base + ' ' + said).trim();
   };
-  recognition.onerror = (e) => { if (e.error !== 'aborted') micNote(t('mic.unavailable', { e: e.error })); };
+  recognition.onerror = (e) => {
+    if (e.error === 'aborted') return;
+    micNote(MIC_ERRORS[e.error] ? t(MIC_ERRORS[e.error]) : t('mic.unavailable', { e: e.error }));
+  };
   recognition.onend = () => {
     if (recognition === r) { recognition = null; setMicUI(false); }
-    micNote(box.value.trim() !== base ? t('mic.check') : '');
+    if (box.value.trim() !== base) micNote(t('mic.check'));
   };
   try {
     recognition.start();
@@ -272,13 +311,36 @@ function liveDictation() {
   }
 }
 
-/* ---------------- Sharing ---------------- */
-const shareSource = (d) => (d.src === 'sheet' ? sheetText(d.id) : handoffText());
+/* ---------------- Sharing, drafts, downloads ---------------- */
+function shareSource(d) {
+  if (d.src === 'sheet') return sheetText(d.id);
+  if (d.src === 'draft') return $('draftText')?.value ?? '';
+  if (d.src === 'grv') return $('grvText')?.value ?? '';
+  return handoffText();
+}
 function print() {
   document.body.classList.add('printing');
   window.print();
   setTimeout(() => document.body.classList.remove('printing'), 500);
 }
+// Opens the owner's own email app with the text. Nothing is sent by this app.
+function openMail(text) {
+  const lines = text.split('\n');
+  const first = lines[0] || '';
+  const m = first.match(/^(Subject|विषय)\s*:\s*(.*)$/);
+  const subject = m ? m[2] : '';
+  const body = (m ? lines.slice(1) : lines).join('\n').trim();
+  window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+function download(name, text, type) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+// Re-draw the checklist behind the dialog so its draft buttons show the new state (without moving focus).
+function refreshBehindModal(id) { if (location.hash === '#/explore/' + id) view.innerHTML = readyView(id); }
 
 /* ---------------- Actions (event delegation) ---------------- */
 const ACTIONS = {
@@ -297,27 +359,75 @@ const ACTIONS = {
   opt: (d) => { const v = QUESTIONS[S.curQ].opts[+d.i][0]; answer(S.curQ, S.curQ === 'need' ? [v] : v); },
   dk: () => answer(S.curQ, 'unknown'),
   'show-results': showResults,
-  // Options → Get ready → Track
+  // Options, route detail, checklist, tracking
+  filter: (d) => { S.filter = FILTERS.includes(d.f) ? d.f : 'all'; save(); route({ keepScroll: true }); },
   explore: (d) => navigate('#/explore/' + d.id),
-  doc: (d) => { const tr = S.tracked[d.id]; tr.docs = tr.docs || {}; if (d.v) tr.docs[d.k] = d.v; else { delete tr.docs[d.k]; if (tr.done) delete tr.done[d.k]; } save(); route({ keepScroll: true }); },
+  save: (d) => { trackedOf(d.id); save(); route({ keepScroll: true }); },
   outcome: (d) => { S.tracked[d.id].outcome = d.v; logEvent(`${tc(byId(d.id).name)}: ${outcomeL(d.v)}`); save(); route({ keepScroll: true }); },
   untrack: (d) => { delete S.tracked[d.id]; save(); route({ keepScroll: true }); },
-  enrich: (d) => enrich(d.slot, JSON.parse(d.v)),
-  // Help, sharing, glossary, reading
-  help: () => openModal(helpModal()),
+  enrich: (d) => {
+    const v = JSON.parse(d.v);
+    const note = changeNote(() => setFact(d.slot, v));
+    logEvent(t('log.added', { l: label(d.slot), v: fmt(d.slot, v) }));
+    view.innerHTML = dashView(note);
+  },
+  refresh: () => { const note = changeNote(() => {}); logEvent(t('log.refreshed')); view.innerHTML = dashView(note); },
+  // Drafts
+  draft: (d) => { trackedOf(d.id); save(); openModal(draftModal(d.id, d.kind)); },
+  'draft-reset': (d) => {
+    const tr = trackedOf(d.id);
+    delete tr.drafts?.[d.kind];
+    if (tr.draftState) delete tr.draftState[d.kind];
+    save();
+    openModal(draftModal(d.id, d.kind));
+    refreshBehindModal(d.id);
+  },
+  'draft-ready': (d) => {
+    const tr = trackedOf(d.id);
+    tr.drafts = tr.drafts || {}; tr.draftState = tr.draftState || {};
+    tr.drafts[d.kind] = $('draftText').value;
+    tr.draftState[d.kind] = tr.draftState[d.kind] === 'prepared' ? undefined : 'prepared';
+    if (tr.draftState[d.kind]) logEvent(t('log.draft', { k: t('draft.' + d.kind), n: tc(byId(d.id).name) }));
+    save();
+    openModal(draftModal(d.id, d.kind));
+    refreshBehindModal(d.id);
+  },
+  mailto: (d) => openMail(shareSource(d)),
+  // Help, grievance, sharing, glossary, reading
+  help: () => navigate('#/help'),
   about: () => openModal(aboutModal()),
+  note: () => openModal(noteModal()),
   sheet: (d) => openModal(sheetModal(d.id)),
   term: (d) => openModal(termModal(d.term)),
   'close-modal': closeModal,
+  'grv-type': (d) => { S.grvType = d.v; save(); route({ keepScroll: true }); },
+  'grv-del': (d) => { S.grievances.splice(+d.i, 1); save(); route({ keepScroll: true }); },
   copy: async (d) => {
-    try { await navigator.clipboard.writeText(shareSource(d)); $('copied').textContent = t('saathi.copied'); }
-    catch { const r = document.createRange(); r.selectNodeContents($('shareText')); getSelection().removeAllRanges(); getSelection().addRange(r); $('copied').textContent = t('saathi.selected'); }
+    const text = shareSource(d);
+    try { await navigator.clipboard.writeText(text); $('copied').textContent = t('saathi.copied'); }
+    catch {
+      const el = $('draftText') || $('grvText') || $('shareText');
+      if (el?.select) el.select();
+      else if (el) { const r = document.createRange(); r.selectNodeContents(el); getSelection().removeAllRanges(); getSelection().addRange(r); }
+      $('copied').textContent = t('saathi.selected');
+    }
   },
   'share-wa': (d) => window.open('https://wa.me/?text=' + encodeURIComponent(shareSource(d)), '_blank', 'noopener'),
   print,
   speak: (d, el) => speak(d.target, el),
   expert: () => setExpert(!document.body.classList.contains('expert')),
+  // Profile
+  pf: (d) => profileChange(d.slot, JSON.parse(d.v)),
+  'pf-need': (d) => {
+    const v = JSON.parse(d.v);
+    const cur = Array.isArray(S.facts.need?.v) ? S.facts.need.v : [];
+    const next = cur.includes(v) ? cur.filter((x) => x !== v) : [...cur, v];
+    profileChange('need', next.length ? next : undefined);
+  },
+  'pf-clear': (d) => profileChange(d.slot, undefined),
   // Housekeeping
+  'export-txt': () => download('msme-navigator-plan.txt', planText(), 'text/plain;charset=utf-8'),
+  'export-json': () => download('msme-navigator-data.json', JSON.stringify(S, null, 2), 'application/json'),
   reset: (d, el) => {
     if (el.dataset.confirm !== '1') { el.dataset.confirm = '1'; el.textContent = t('dash.clearConfirm'); el.classList.add('primary'); return; }
     resetAll(); navigate('#/');
@@ -327,21 +437,71 @@ const ACTIONS = {
 
 document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-act]');
-  if (!el || el.type === 'checkbox') return;
+  if (!el) return;
   const fn = ACTIONS[el.dataset.act];
   if (fn) { e.preventDefault(); fn(el.dataset, el, e); }
 });
+document.addEventListener('change', (e) => {
+  const el = e.target;
+  if (el.matches('select[data-status]')) {
+    const tr = trackedOf(el.dataset.id);
+    const bag = el.dataset.doc ? (tr.docs = tr.docs || {}) : (tr.items = tr.items || {});
+    if (el.value) bag[el.dataset.k] = el.value; else delete bag[el.dataset.k];
+    save();
+    route({ keepScroll: true });
+    // Keep keyboard users where they were.
+    [...document.querySelectorAll('select[data-status]')].find((s) => s.dataset.k === el.dataset.k)?.focus();
+  } else if (el.matches('select[data-pf]')) {
+    profileChange(el.dataset.pf, el.value || undefined);
+  } else if (el.matches('textarea[data-note]')) {
+    const tr = trackedOf(el.dataset.id);
+    tr.notes = tr.notes || {};
+    if (el.value.trim()) tr.notes[el.dataset.k] = el.value.trim(); else delete tr.notes[el.dataset.k];
+    save();
+  }
+});
+// Draft edits are kept as the owner types, so nothing is lost when the dialog closes.
+document.addEventListener('input', (e) => {
+  const el = e.target;
+  if (!el.matches('textarea[data-draft]')) return;
+  const tr = trackedOf(el.dataset.id);
+  tr.drafts = tr.drafts || {};
+  tr.drafts[el.dataset.kind] = el.value;
+  save();
+});
 document.addEventListener('submit', (e) => {
   const form = e.target;
-  if (form.dataset.form === 'amount') {
-    e.preventDefault();
+  const kind = form.dataset.form;
+  if (!kind) return;
+  e.preventDefault();
+  if (kind === 'amount') {
     const a = parseAmount($('amtIn').value);
     if (!a) { $('amtErr').textContent = t('q.amountErr'); return; }
     answer('amount', a);
-  } else if (form.dataset.form === 'pin') {
-    e.preventDefault();
+  } else if (kind === 'pin') {
     const pin = $('pin').value.trim();
-    $('near').innerHTML = /^\d{6}$/.test(pin) ? nearbyHtml(form.dataset.id, pin) : `<p class="small err">${esc(t('pin.err'))}</p>`;
+    if (/^\d{6}$/.test(pin)) { S.pin = pin; save(); $('near').innerHTML = nearbyHtml(form.dataset.id || null, pin); }
+    else $('near').innerHTML = `<p class="small err">${esc(t('pin.err'))}</p>`;
+  } else if (kind === 'emi') {
+    const P = parseAmount($('emiP').value) ?? parseFloat($('emiP').value);
+    const r = parseFloat($('emiR').value), n = parseInt($('emiN').value, 10);
+    const ok = P > 0 && r >= 0 && r <= 60 && n >= 1 && n <= 360;
+    $('emiOut').innerHTML = ok ? emiHtml(P, r, n) : `<p class="small err">${esc(t('emi.err'))}</p>`;
+  } else if (kind === 'grv') {
+    const filed = $('grvDate').value || new Date().toISOString().slice(0, 10);
+    S.grievances.push({ type: S.grvType, filed, ref: $('grvRef').value.trim(), next: $('grvNext').value || '' });
+    logEvent(t('log.grv', { x: t('grv.type.' + S.grvType) }));
+    save();
+    route({ keepScroll: true });
+  } else if (kind === 'pf-amount') {
+    const a = parseAmount($('pfAmt').value);
+    if (!a) { $('pfAmtErr').textContent = t('q.amountErr'); return; }
+    profileChange('amount', a);
+  } else if (kind === 'pf-pin') {
+    const pin = $('pfPin').value.trim();
+    if (pin && !/^\d{6}$/.test(pin)) { $('pinMsg').textContent = t('pin.err'); return; }
+    S.pin = pin; save();
+    $('pinMsg').textContent = t(pin ? 'pf.pinSaved' : 'pf.pinCleared');
   }
 });
 // Ctrl/Cmd+Enter submits the story.
@@ -352,7 +512,7 @@ document.addEventListener('keydown', (e) => {
 /* ---------------- Language, expert view, boot ---------------- */
 function setPill() {
   const p = $('aiPill');
-  p.textContent = env.checked ? t(env.ai ? 'ai.on' : 'ai.off') : t('ai.checking');
+  p.textContent = !env.checked ? t('ai.checking') : env.ai ? t('ai.on') : t('ai.off');
   p.title = t('ai.title');
   p.classList.toggle('on', env.ai);
 }
@@ -378,6 +538,7 @@ function applyStaticText() {
 }
 function showMics() {
   for (const id of ['speakBox', 'micInline']) { const el = $(id); if (el) el.hidden = !env.canSpeak; }
+  const nv = $('noVoice'); if (nv) nv.hidden = env.canSpeak;
 }
 function switchLang(l) {
   if (!LANGS[l]) return;
@@ -394,9 +555,13 @@ if (!env.tts) document.body.classList.add('no-tts');
 try { if (localStorage.getItem('msmeNav.expert')) document.body.classList.add('expert'); } catch { /* ignore */ }
 applyStaticText();
 route();
-api.health().then((h) => {
-  env.ai = !!h.ai;
-  env.checked = true;
-  setPill();
-  showMics();
-});
+if (SERVER_AI) {
+  import('./api.js').then(async (m) => {
+    api = m;
+    const h = await m.health();
+    env.ai = !!h.ai;
+    env.checked = true;
+    setPill();
+    showMics();
+  });
+}

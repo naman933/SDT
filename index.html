@@ -4,17 +4,18 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>MSME Navigator</title>
-    <meta name="description" content="Tell us what's happening in your business. We'll help you figure out which financial and support routes to explore next — no scheme names needed." />
-    <meta name="theme-color" content="#155eef" />
+    <meta name="description" content="Tell us what's happening in your business. We'll help you discover support routes that may be relevant, and show you what to do next. No scheme names needed." />
+    <meta name="theme-color" content="#123B3A" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   </head>
   <body>
     <div class="wrap">
       <header class="topbar">
         <a class="brand" href="#/">MSME <i>Navigator</i></a>
-        <nav class="nav">
-          <button class="pill help" data-act="help" data-i18n="nav.help">🙋 Help</button>
-          <a class="pill" href="#/my-msme" data-i18n="nav.my">My MSME</a>
+        <nav class="nav" aria-label="Main">
+          <a class="pill help" id="navHelp" href="#/help" data-i18n="nav.help">Help &amp; grievance</a>
+          <a class="pill" id="navMy" href="#/my-msme" data-i18n="nav.my">My journey</a>
+          <a class="pill" id="navFunding" href="#/funding" data-i18n="nav.funding" hidden>Funding</a>
           <button class="pill lang" id="langBtn" data-act="lang" lang="hi">हिंदी</button>
         </nav>
       </header>
